@@ -8,6 +8,7 @@
 #include <atomic>
 #include <string>
 #include <sstream>
+#include <iomanip>
 
 const double G = 6.67430e-11; // Gravity constant
 const double NOT_ZERO = 1e-9; // constant to avoid division by zero
@@ -90,7 +91,7 @@ public:
             for (size_t i = 0; i < bodies.size(); ++i) {
                 for (size_t j = 0; j < bodies.size(); ++j) {
                     if (i != j) {
-                        bodies[i].addForce(bodies[j]);
+                        bodies[i].Force(bodies[j]);
                     }
                 }
             }
@@ -112,3 +113,43 @@ public:
         std::cout << "Sequential simulation completed in " << duration << " ms" << std::endl;
     }
 };
+
+//////////////// to test
+void createRandomSystem(NBodySimulation& sim, int numBodies) {
+    // Central massive body (like a star)
+    sim.newBody(Body(1.0e30, 0.0, 0.0, 0.0, 0.0));
+    
+    // Add random bodies
+    for (int i = 1; i < numBodies; ++i) {
+        double angle = (rand() % 1000) * 2.0 * M_PI / 1000.0;
+        double distance = 1.0e11 + (rand() % 1000) * 1.0e9;
+        double mass = 1.0e23 + (rand() % 1000) * 1.0e22;
+        
+        double x = distance * cos(angle);
+        double y = distance * sin(angle);
+        
+        // Calculate circular orbit velocity
+        double v = std::sqrt(G * 1.0e30 / distance);
+        double vx = -v * sin(angle);
+        double vy = v * cos(angle);
+        
+        sim.newBody(Body(mass, x, y, vx, vy));
+    }
+}
+///////////////////////
+
+int main() {
+    // Set random seed
+    srand(static_cast<unsigned int>(time(nullptr)));
+    
+    // Create simulation with time step and total time
+    NBodySimulation simulation(1, 20); // 1 second time step, 20 total
+    
+    // Create a system of bodies 
+    createRandomSystem(simulation, 100); 
+    
+    // Run sequential simulation
+    simulation.runSequential();
+    
+    return 0;
+}
