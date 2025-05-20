@@ -41,4 +41,15 @@ struct Body {
         fx += force * dx / dist;
         fy += force * dy / dist;
     }
+
+    void updateVelocity(double dt) { // where dt is the timestep
+        vx += dt * fx / mass;
+        vy += dt * fy / mass;
+    }
+
+    void updatePosition(double dt) {
+        x += dt * vx;
+        y += dt * vy;
+    }
+    
 };
