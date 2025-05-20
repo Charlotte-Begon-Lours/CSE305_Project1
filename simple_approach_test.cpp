@@ -153,3 +153,11 @@ int main() {
     
     return 0;
 }
+
+/*
+When compiling:  g++ -std=c++11 simple_approach_test.cpp -o test
+When running: ./test
+
+We obtain this output: "Sequential simulation completed in 7 ms"
+
+*/
