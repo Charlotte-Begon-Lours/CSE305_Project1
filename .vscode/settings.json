@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.ys": "c",
+        "vector": "cpp"
+    }
+}
