@@ -10,6 +10,7 @@
 #include <sstream>
 
 const double G = 6.67430e-11; // Gravity constant
+const double NOT_ZERO = 1e-9; // constant to avoid division by zero
 
 double sqr(int x) {
     return x*x;
@@ -30,6 +31,9 @@ struct Body {
         double dy = other.y - y;
         double dist = std::sqrt(sqr(dx) + sqr(dy));
         
+        // To avoid division by zero
+        dist = std::max(dist, NOT_ZERO);
+
         // Newton's law:
         double force = G * mass * other.mass / (dist * dist);
         
