@@ -11,6 +11,10 @@
 
 const double G = 6.67430e-11; // Gravity constant
 
+double sqr(int x) {
+    return x*x;
+}
+
 // Structure to represent a body in 2D space: we use a struct instead of a class as we want to make it publicly accessible in the whole code
 struct Body {
     double mass;     // of the body
@@ -18,4 +22,19 @@ struct Body {
     double vx, vy;   // velocity components
     double fx, fy;   // Force components
 
-}
+    Body(double m, double x_pos, double y_pos, double vel_x, double vel_y)
+        : mass(m), x(x_pos), y(y_pos), vx(vel_x), vy(vel_y), fx(0.0), fy(0.0) {} //constructor
+
+    void Force(const Body& other) { // force of another body on this body
+        double dx = other.x - x;
+        double dy = other.y - y;
+        double dist = std::sqrt(sqr(dx) + sqr(dy));
+        
+        // Newton's law:
+        double force = G * mass * other.mass / (dist * dist);
+        
+        // add these forces to the total exerted force
+        fx += force * dx / dist;
+        fy += force * dy / dist;
+    }
+};
