@@ -53,3 +53,19 @@ struct Body {
     }
     
 };
+
+
+class NBodySimulation {
+private:
+    std::vector<Body> bodies;
+    double timeStep;
+    double totalTime;
+    double currentTime;
+    int numSteps;
+
+public:
+    NBodySimulation(double dt, double total_time)
+        : timeStep(dt), totalTime(total_time), currentTime(0.0) {
+        numSteps = static_cast<int>(totalTime / timeStep);
+    }
+};
