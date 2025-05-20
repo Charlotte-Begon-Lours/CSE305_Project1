@@ -68,4 +68,47 @@ public:
         : timeStep(dt), totalTime(total_time), currentTime(0.0) {
         numSteps = static_cast<int>(totalTime / timeStep);
     }
+
+    void newBody(const Body& body) {
+        bodies.push_back(body);
+    }
+
+    // Simple approach
+    void runSequential() {
+        auto startTime = std::chrono::high_resolution_clock::now();
+        
+        // Main loop
+        for (int step = 1; step <= numSteps; ++step) {
+            
+            // reset the forces
+            for (auto& body : bodies) {
+                body.fx = 0.0;
+                body.fy = 0.0;
+            }
+            
+            // calculate forces between all pairs of bodies
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                for (size_t j = 0; j < bodies.size(); ++j) {
+                    if (i != j) {
+                        bodies[i].addForce(bodies[j]);
+                    }
+                }
+            }
+            
+            // update velocities and positions
+            for (auto& body : bodies) {
+                body.updateVelocity(timeStep);
+                body.updatePosition(timeStep);
+            }
+            
+            // update current time
+            currentTime += timeStep;
+        
+        }
+
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Sequential simulation completed in " << duration << " ms" << std::endl;
+    }
 };
