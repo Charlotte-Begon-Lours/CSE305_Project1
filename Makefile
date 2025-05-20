@@ -5,9 +5,9 @@ NVCC = /usr/local/cuda/bin/nvcc
 testing: testing.cpp
 	$(CXX) $(CFLAGS) -o testing testing.cpp
 
-hello: hello.cpp
-	$(CXX) $(CFLAGS) -o hello hello.cpp
+main: main.cpp
+	$(CXX) $(CFLAGS) -o main main.cpp
 
 clean:
 	rm -f testing
-	rm -f hello
+	rm -f main
