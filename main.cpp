@@ -34,8 +34,25 @@ public:
         y += dt * vy;
     }
 
+    void Force_update(const Body& other) { // force of another body on this body
+        double dx = other.x - x;
+        double dy = other.y - y;
+        double dist = std::sqrt(square(dx) + square(dy));
+        
+        // To avoid division by zero
+        dist = std::max(dist, NOT_ZERO);
+
+        // Newton's law:
+        double force = G * mass * other.mass / (dist * dist);
+        
+        // add these forces to the total exerted force
+        fx += force * dx / dist;
+        fy += force * dy / dist;
+    }
+
 };
 
+// store the forces between each bodies in a matrix of size NxN 
 std::vector<std::vector<double>> fixed_seq_forces(std::vector<Body>& bodies, size_t N){
     std::vector<std::vector<double>> results(N, std::vector<double>(N, 1));
     for (size_t i=0;i<N; i++){
@@ -54,31 +71,5 @@ std::vector<std::vector<double>> fixed_seq_forces(std::vector<Body>& bodies, siz
             }
         }
     }
-    return results;
-}
-
-int main(){
-    std::vector<Body> bodies;
-    
-    //Body(double mass, double x, double y, double vX, double vY)
-    Body earth = Body(5.97237e24,0, 0, 0, 0);
-    earth.idBody = 0;
-    Body moon = Body(7.342e22, 384400000.0, 0, 0, 0);
-    moon.idBody = 1;
-    bodies.push_back(earth);
-    bodies.push_back(moon);
-    size_t N = bodies.size();
-    std::vector<std::vector<double>> results(N, std::vector<double>(N, 0));
-    results = fixed_seq_forces(bodies, N);
-    std::cout << "Force on object earth and moon : " << results[0][1] << " N" << std::endl;
-
-    for (int i = 0; i < N; ++i) {
-        std::cout << "Particle " << bodies[i].idBody  << ":\n";
-        std::cout << "  Mass = " << bodies[i].mass << "\n";
-        std::cout << "  Coordinates = (" << bodies[i].x << ", " << bodies[i].y << ")\n";
-        std::cout << "--------------------------\n";
-        std::cout << "Force on object earth and moon " << i << ": " << results[0][1] << " N" << std::endl;
-    }
-
-    return 0;
+    return results; 
 }
