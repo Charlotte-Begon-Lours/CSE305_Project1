@@ -43,6 +43,32 @@ struct Body {
         fy += force * dy / dist;
     }
 
+    void OptimizedForce(Body& other) {
+        // Directly computes Fij and Fji
+        double dx = other.x - x;
+        double dy = other.y - y;
+        double dist = std::sqrt(sqr(dx) + sqr(dy));
+        
+        // To avoid division by zero
+        dist = std::max(dist, NOT_ZERO);
+
+        // Newton's law:
+        double force = G * mass * other.mass / (dist * dist);
+        
+        // compute the x and y components of the force
+        double force_x = force * dx / dist;
+        double force_y = force * dy / dist;
+
+        //// By Newton's 3rd law Fij = -Fji
+        // update current object's force
+        fx += force_x;
+        fy += force_y;
+
+        // update the force of the object acting on it
+        other.fx -= force_x;
+        other.fy -= force_y;
+    }
+
     void updateVelocity(double dt) { // where dt is the timestep
         vx += dt * fx / mass;
         vy += dt * fy / mass;
@@ -142,21 +168,23 @@ public:
         if (Nthreads == 0) {
             Nthreads = 1;
         }
-
+        
         for (int step = 1; step <= numSteps; ++step) {
+            // Compute forces sequentially
             for (size_t i = 0; i < bodies.size(); ++i) {
                 bodies[i].fx = 0.0;
                 bodies[i].fy = 0.0;
             }
         
             for (size_t i = 0; i < bodies.size(); ++i) {
-                for (size_t j = 0; j < bodies.size(); ++j) {
+                for (size_t j = i+1; j < bodies.size(); ++j) { // originally we started at size_t j = 0
                     if (i != j) {
-                        bodies[i].Force(bodies[j]);
+                        bodies[i].OptimizedForce(bodies[j]); // originally we used Force(bodies[j])
                     }
                 }
             }
-        
+
+            // Update position and velocity in parallel
             std::vector<std::thread> threads(Nthreads - 1);
             std::vector<Body>::iterator block_start = bodies.begin();
 
@@ -264,7 +292,15 @@ int main() {
 When compiling:  g++ -std=c++11 simple_approach_test.cpp -o test
 When running: ./test
 
+1) When we only had runSequential
+Sequential simulation completed in 7 ms
+
+2) When we added parallelization
 Sequential simulation completed in 7 ms
 Parallel simulation completed in 13 ms
+
+3) When we avoided computing Fij twice
+Sequential simulation completed in 9 ms
+Parallel simulation completed in 7 ms
 
 */
