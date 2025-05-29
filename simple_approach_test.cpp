@@ -283,6 +283,80 @@ public:
                   << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count()
                   << " ms" << std::endl;
     }
+
+
+    void runParallelNoMutex(double dt, size_t Nthreads) {
+        auto startTime = std::chrono::high_resolution_clock::now();
+
+        size_t length = bodies.size();
+        if (length == 0 || Nthreads == 0) return;
+        if (Nthreads > length) Nthreads = length;
+
+        for (int step = 0; step < numSteps; ++step) {
+            std::vector<std::vector<std::pair<double, double>>> force_acc(length, std::vector<std::pair<double, double>>(Nthreads, {0.0, 0.0}));
+
+            std::vector<std::thread> threads;
+            auto computeForces = [&](size_t tid, size_t start, size_t end) {
+                for (size_t i = start; i < end; ++i) {
+                    for (size_t j = 0; j < length; ++j) {
+                        if (i == j) continue;
+                        double dx = bodies[j].x - bodies[i].x;
+                        double dy = bodies[j].y - bodies[i].y;
+                        double dist = std::sqrt(sqr(dx) + sqr(dy));
+                        dist = std::max(dist, NOT_ZERO);
+                        double force = G * bodies[i].mass * bodies[j].mass / sqr(dist);
+                        double fx = force * dx / dist;
+                        double fy = force * dy / dist;
+                        force_acc[i][tid].first += fx;
+                        force_acc[i][tid].second += fy;
+                    }
+                }
+            };
+
+            size_t block_size = length / Nthreads;
+            for (size_t t = 0; t < Nthreads; ++t) {
+                size_t start = t * block_size;
+                size_t end = (t == Nthreads - 1) ? length : start + block_size;
+                threads.emplace_back(computeForces, t, start, end);
+            }
+
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+
+            // Reduce forces
+            for (size_t i = 0; i < length; ++i) {
+                bodies[i].fx = bodies[i].fy = 0.0;
+                for (size_t t = 0; t < Nthreads; ++t) {
+                    bodies[i].fx += force_acc[i][t].first;
+                    bodies[i].fy += force_acc[i][t].second;
+                }
+            }
+
+            // Update positions and velocities
+            threads.clear();
+            auto updateFunc = [&](size_t start, size_t end) {
+                updatePositionThread(bodies.begin() + start, bodies.begin() + end, dt);
+            };
+
+            for (size_t t = 0; t < Nthreads; ++t) {
+                size_t start = t * block_size;
+                size_t end = (t == Nthreads - 1) ? length : start + block_size;
+                threads.emplace_back(updateFunc, start, end);
+            }
+
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+
+            currentTime += dt;
+        }
+
+        auto endTime = std::chrono::high_resolution_clock::now();
+        std::cout << "Parallel simulation without mutex completed in "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count()
+                  << " ms" << std::endl;
+    }
 };
 
 //////////////// to test
@@ -317,7 +391,7 @@ int main() {
     NBodySimulation simulation_sequential(1, 20); // 1 second time step, 20 total
 
     // Create a system of bodies 
-    createRandomSystem(simulation_sequential, 1000); 
+    createRandomSystem(simulation_sequential, 10000); 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
     
     // Run sequential simulation
@@ -326,14 +400,20 @@ int main() {
 
     NBodySimulation simulation_parallel(1, 20);
     simulation_parallel.setBodies(initial_bodies);
-    simulation_parallel.runParallel(1.0, 4);
+    simulation_parallel.runParallel(1.0, 16);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
 
     NBodySimulation simulation_parallel_mutex(1, 20);
     simulation_parallel_mutex.setBodies(initial_bodies);
-    simulation_parallel_mutex.runParallelWithMutex(1.0, 4);
+    simulation_parallel_mutex.runParallelWithMutex(1.0, 16);
     std::vector<Body> mutex_result = simulation_parallel_mutex.getBodies();
+
+
+    NBodySimulation simulation_parallel_nomutex(1, 20);
+    simulation_parallel_nomutex.setBodies(initial_bodies);
+    simulation_parallel_nomutex.runParallelNoMutex(1.0, 16);
+    std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
 
     //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
     bool same_results = true;
@@ -385,6 +465,11 @@ int main() {
         std::cout << "OK." << std::endl;
     } else {
         std::cout << "Mutex and sequential simulations grant different results" << std::endl;
+    }
+    if (compareResults(sequential_result, nomutex_result)) {
+        std::cout << "OK." << std::endl;
+    } else {
+        std::cout << "No mutex version and sequential simulations grant different results" << std::endl;
     }
     
     return 0;
