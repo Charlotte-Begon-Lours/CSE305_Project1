@@ -43,6 +43,32 @@ struct Body {
         fy += force * dy / dist;
     }
 
+    void OptimizedForce(Body& other) {
+        // Directly computes Fij and Fji
+        double dx = other.x - x;
+        double dy = other.y - y;
+        double dist = std::sqrt(sqr(dx) + sqr(dy));
+        
+        // To avoid division by zero
+        dist = std::max(dist, NOT_ZERO);
+
+        // Newton's law:
+        double force = G * mass * other.mass / (dist * dist);
+        
+        // compute the x and y components of the force
+        double force_x = force * dx / dist;
+        double force_y = force * dy / dist;
+
+        //// By Newton's 3rd law Fij = -Fji
+        // update current object's force
+        fx += force_x;
+        fy += force_y;
+
+        // update the force of the object acting on it
+        other.fx -= force_x;
+        other.fy -= force_y;
+    }
+
     void updateVelocity(double dt) { // where dt is the timestep
         vx += dt * fx / mass;
         vy += dt * fy / mass;
@@ -65,6 +91,15 @@ private:
     int numSteps;
 
 public:
+
+    const std::vector<Body>& getBodies() { 
+        return bodies; 
+    }
+
+    void setBodies(const std::vector<Body>& newBodies) { 
+        bodies = newBodies; 
+    }
+
     NBodySimulation(double dt, double total_time)
         : timeStep(dt), totalTime(total_time), currentTime(0.0) {
         numSteps = static_cast<int>(totalTime / timeStep);
@@ -112,6 +147,71 @@ public:
         
         std::cout << "Sequential simulation completed in " << duration << " ms" << std::endl;
     }
+
+    void updatePositionThread(std::vector<Body>::iterator begin, std::vector<Body>::iterator end, double dt) { 
+        std::vector<Body>::iterator it = begin;
+        while (it != end) {
+            it->updateVelocity(dt);
+            it->updatePosition(dt);
+            ++it;
+        }
+}
+    void runParallel(double dt, size_t Nthreads) {
+        // Start timer
+        auto startTime = std::chrono::high_resolution_clock::now();
+
+        size_t length = bodies.size();
+
+        if (length == 0){
+            return;
+        } 
+        if (Nthreads == 0) {
+            Nthreads = 1;
+        }
+        
+        for (int step = 1; step <= numSteps; ++step) {
+            // Compute forces sequentially
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                bodies[i].fx = 0.0;
+                bodies[i].fy = 0.0;
+            }
+        
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                for (size_t j = i+1; j < bodies.size(); ++j) { // originally we started at size_t j = 0
+                    if (i != j) {
+                        bodies[i].OptimizedForce(bodies[j]); // originally we used Force(bodies[j])
+                    }
+                }
+            }
+
+            // Update position and velocity in parallel
+            std::vector<std::thread> threads(Nthreads - 1);
+            std::vector<Body>::iterator block_start = bodies.begin();
+
+            size_t block_size = length / Nthreads;
+
+            for (size_t i = 0; i < Nthreads - 1; ++i) {
+                std::vector<Body>::iterator block_end = block_start + block_size;
+                threads[i] = std::thread(&NBodySimulation::updatePositionThread, this, block_start, block_end, dt); // chatGPT helped me figure out using "this"
+                block_start = block_end;
+            }
+
+            updatePositionThread(block_start, bodies.end(), dt);
+
+            //  Join Threads
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+
+            currentTime += dt;
+        }
+
+        // End timer
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Parallel simulation completed in " << duration << " ms" << std::endl;
+    }
 };
 
 //////////////// to test
@@ -143,13 +243,47 @@ int main() {
     srand(static_cast<unsigned int>(time(nullptr)));
     
     // Create simulation with time step and total time
-    NBodySimulation simulation(1, 20); // 1 second time step, 20 total
-    
+    NBodySimulation simulation_sequential(1, 20); // 1 second time step, 20 total
+
     // Create a system of bodies 
-    createRandomSystem(simulation, 100); 
+    createRandomSystem(simulation_sequential, 100); 
+    std::vector<Body> initial_bodies = simulation_sequential.getBodies();
     
     // Run sequential simulation
-    simulation.runSequential();
+    simulation_sequential.runSequential();
+    std::vector<Body> sequential_result = simulation_sequential.getBodies();
+
+    NBodySimulation simulation_parallel(1, 20);
+    simulation_parallel.setBodies(initial_bodies);
+    simulation_parallel.runParallel(1.0, 4);
+    std::vector<Body> parallel_result = simulation_parallel.getBodies();
+
+    //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
+    bool same_results = true;
+
+    if (sequential_result.size() != parallel_result.size()) {
+        same_results = false;
+    } 
+    
+    else {
+        for (size_t i=0; i < sequential_result.size(); ++i) {
+            double dx = std::abs(sequential_result[i].x - parallel_result[i].x);
+            double dy = std::abs(sequential_result[i].y - parallel_result[i].y);
+            double dvx = std::abs(sequential_result[i].vx - parallel_result[i].vx);
+            double dvy = std::abs(sequential_result[i].vy - parallel_result[i].vy);
+
+            if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
+                same_results = false;
+                break;
+            }
+        }
+    }
+
+    if (same_results) {
+        std::cout << "OK." << std::endl;
+    } else {
+        std::cout << "Parallel and sequential simulations grant different results" << std::endl;
+    }
     
     return 0;
 }
@@ -158,6 +292,15 @@ int main() {
 When compiling:  g++ -std=c++11 simple_approach_test.cpp -o test
 When running: ./test
 
-We obtain this output: "Sequential simulation completed in 7 ms"
+1) When we only had runSequential
+Sequential simulation completed in 7 ms
+
+2) When we added parallelization
+Sequential simulation completed in 7 ms
+Parallel simulation completed in 13 ms
+
+3) When we avoided computing Fij twice
+Sequential simulation completed in 9 ms
+Parallel simulation completed in 7 ms
 
 */
