@@ -18,7 +18,8 @@ double sqr(int x) {
 }
 
 // Structure to represent a body in 2D space: we use a struct instead of a class as we want to make it publicly accessible in the whole code
-struct Body {
+class Body {
+public:
     double mass;     // of the body
     double x, y;     // position coordinates
     double vx, vy;   // velocity components
@@ -246,7 +247,7 @@ int main() {
     NBodySimulation simulation_sequential(1, 20); // 1 second time step, 20 total
 
     // Create a system of bodies 
-    createRandomSystem(simulation_sequential, 100); 
+    createRandomSystem(simulation_sequential, 10000); 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
     
     // Run sequential simulation
@@ -255,7 +256,7 @@ int main() {
 
     NBodySimulation simulation_parallel(1, 20);
     simulation_parallel.setBodies(initial_bodies);
-    simulation_parallel.runParallel(1.0, 4);
+    simulation_parallel.runParallel(1.0, 10);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
     //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
