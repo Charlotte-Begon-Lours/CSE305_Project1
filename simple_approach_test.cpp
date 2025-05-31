@@ -9,11 +9,12 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <fstream>
 
-const double G = 6.67430e-11; // Gravity constant
-const double NOT_ZERO = 1e-9; // constant to avoid division by zero
+#define G 6.67430e-11 // Gravity constant
+#define NOT_ZERO 1e-9 // constant to avoid division by zero
 
-double sqr(int x) {
+double sqr(double x) {
     return x*x;
 }
 
@@ -34,6 +35,7 @@ public:
         double dist = std::sqrt(sqr(dx) + sqr(dy));
         
         // To avoid division by zero
+
         dist = std::max(dist, NOT_ZERO);
 
         // Newton's law:
@@ -51,10 +53,11 @@ public:
         double dist = std::sqrt(sqr(dx) + sqr(dy));
         
         // To avoid division by zero
+        //double not_zero = NOT_ZERO;
         dist = std::max(dist, NOT_ZERO);
 
         // Newton's law:
-        double force = G * mass * other.mass / sqr(dist);
+        double force = G * mass * other.mass / (dist*dist);
         
         // compute the x and y components of the force
         double force_x = force * dx / dist;
@@ -62,8 +65,8 @@ public:
 
         //// By Newton's 3rd law Fij = -Fji
         // update current object's force
-        fx += force_x;
-        fy += force_y;
+        this->fx += force_x;
+        this->fy += force_y;
 
         // update the force of the object acting on it
         other.fx -= force_x;
@@ -71,13 +74,13 @@ public:
     }
 
     void updateVelocity(double dt) { // where dt is the timestep
-        vx += dt * fx / mass;
-        vy += dt * fy / mass;
+        this->vx += dt * fx / mass;
+        this->vy += dt * fy / mass;
     }
 
     void updatePosition(double dt) {
-        x += dt * vx;
-        y += dt * vy;
+        this->x += dt * vx;
+        this->y += dt * vy;
     }
     
 };
@@ -112,6 +115,11 @@ public:
 
     // Simple approach
     void runSequential() {
+        std::ofstream file("positions_sequential.csv");
+        if (!file.is_open()) {
+            std::cerr << "Failed to open the file." << std::endl;
+        return;
+    }
         auto startTime = std::chrono::high_resolution_clock::now();
         
         // Main loop
@@ -128,6 +136,7 @@ public:
                 for (size_t j = 0; j < bodies.size(); ++j) {
                     if (i != j) {
                         bodies[i].Force(bodies[j]);
+                        std::cout << "Force on body " << i << ": (" << bodies[i].fx << ", " << bodies[i].fy << ")" << std::endl;
                     }
                 }
             }
@@ -136,12 +145,16 @@ public:
             for (auto& body : bodies) {
                 body.updateVelocity(timeStep);
                 body.updatePosition(timeStep);
+                std::cout << "Body position: (" << body.x << ", " << body.y << ")" << std::endl;
+                file << body.x << ',' << body.y << ',';
             }
-            
+            file << "\n";
+
             // update current time
             currentTime += timeStep;
         
         }
+        file.close();
 
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
@@ -150,12 +163,14 @@ public:
     }
 
     void updatePositionThread(std::vector<Body>::iterator begin, std::vector<Body>::iterator end, double dt) { 
+        //std::ofstream file("position_parallel.csv");
         std::vector<Body>::iterator it = begin;
         while (it != end) {
             it->updateVelocity(dt);
             it->updatePosition(dt);
             ++it;
         }
+
 }
     void runParallel(double dt, size_t Nthreads) {
         // Start timer
@@ -362,8 +377,8 @@ public:
 
 //////////////// to test
 void createRandomSystem(NBodySimulation& sim, int numBodies) {
-    // Central massive body (like a star)
-    sim.newBody(Body(1.0e30, 0.0, 0.0, 0.0, 0.0));
+    // Central massive body (like a star) 
+    sim.newBody(Body(1.0e30, 0.0, 0.0, 0.0, 0.0)); 
     
     // Add random bodies
     for (int i = 1; i < numBodies; ++i) {
@@ -375,7 +390,7 @@ void createRandomSystem(NBodySimulation& sim, int numBodies) {
         double y = distance * sin(angle);
         
         // Calculate circular orbit velocity
-        double v = std::sqrt(G * 1.0e30 / distance);
+        double v = std::sqrt(G * 1.0e30 / distance)*10000000;
         double vx = -v * sin(angle);
         double vy = v * cos(angle);
         
@@ -389,10 +404,10 @@ int main() {
     srand(static_cast<unsigned int>(time(nullptr)));
     
     // Create simulation with time step and total time
-    NBodySimulation simulation_sequential(1, 20); // 1 second time step, 20 total
+    NBodySimulation simulation_sequential(10, 10000); // 1 second time step, 20 total
 
     // Create a system of bodies 
-    createRandomSystem(simulation_sequential, 10000); 
+    createRandomSystem(simulation_sequential, 10); 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
     
     // Run sequential simulation
@@ -401,19 +416,19 @@ int main() {
 
     NBodySimulation simulation_parallel(1, 20);
     simulation_parallel.setBodies(initial_bodies);
-    simulation_parallel.runParallel(1.0, 16);
+    simulation_parallel.runParallel(1.0, 2);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
 
     NBodySimulation simulation_parallel_mutex(1, 20);
     simulation_parallel_mutex.setBodies(initial_bodies);
-    simulation_parallel_mutex.runParallelWithMutex(1.0, 16);
+    simulation_parallel_mutex.runParallelWithMutex(1.0, 2);
     std::vector<Body> mutex_result = simulation_parallel_mutex.getBodies();
 
 
     NBodySimulation simulation_parallel_nomutex(1, 20);
     simulation_parallel_nomutex.setBodies(initial_bodies);
-    simulation_parallel_nomutex.runParallelNoMutex(1.0, 16);
+    simulation_parallel_nomutex.runParallelNoMutex(1.0, 2);
     std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
 
     //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
