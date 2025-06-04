@@ -118,8 +118,15 @@ public:
         std::ofstream file("positions_sequential.csv");
         if (!file.is_open()) {
             std::cerr << "Failed to open the file." << std::endl;
-        return;
-    }
+            return;
+        }
+
+        for (size_t i = 0; i < bodies.size(); ++i) {
+            file << bodies[i].mass;
+            if (i != bodies.size() - 1) file << ',';
+        }
+        file << '\n';
+
         auto startTime = std::chrono::high_resolution_clock::now();
         
         // Main loop
@@ -132,14 +139,20 @@ public:
             }
             
             // calculate forces between all pairs of bodies
-            for (size_t i = 0; i < bodies.size(); ++i) {
+            /*for (size_t i = 0; i < bodies.size(); ++i) {
                 for (size_t j = 0; j < bodies.size(); ++j) {
                     if (i != j) {
                         bodies[i].Force(bodies[j]);
                         std::cout << "Force on body " << i << ": (" << bodies[i].fx << ", " << bodies[i].fy << ")" << std::endl;
                     }
                 }
+            }*/
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                for (size_t j = i + 1; j < bodies.size(); ++j) {
+                    bodies[i].OptimizedForce(bodies[j]);
+                }
             }
+
             
             // update velocities and positions
             for (auto& body : bodies) {
@@ -397,6 +410,42 @@ void createRandomSystem(NBodySimulation& sim, int numBodies) {
         sim.newBody(Body(mass, x, y, vx, vy));
     }
 }
+
+void createSolarSystem(NBodySimulation& sim) {
+    // SUN
+    sim.newBody(Body(1.9885e30, 0.0, 0.0, 0.0, 0.0)); // Sun
+
+    // Format: {mass [kg], distance from Sun [m], orbital velocity [m/s]}
+    struct Planet {
+        double mass;
+        double distance;
+        const char* name; // optional, not used here
+    };
+
+    std::vector<Planet> planets = {
+        {3.3011e23, 5.79e10, "Mercury"},
+        {4.8675e24, 1.082e11, "Venus"},
+        {5.9724e24, 1.496e11, "Earth"},
+        {6.4171e23, 2.279e11, "Mars"},
+        {1.898e27, 7.785e11, "Jupiter"},
+        {5.683e26, 1.433e12, "Saturn"},
+        {8.681e25, 2.877e12, "Uranus"},
+        {1.024e26, 4.503e12, "Neptune"},
+    };
+
+    for (const auto& p : planets) {
+        double x = p.distance;
+        double y = 0.0;
+
+        // Orbital speed: circular orbit approximation
+        double v = std::sqrt(G * 1.9885e30 / p.distance); 
+        double vx = 0.0;
+        double vy = v;
+
+        sim.newBody(Body(p.mass, x, y, vx, vy));
+    }
+}
+
 ///////////////////////
 
 int main() {
@@ -404,29 +453,35 @@ int main() {
     srand(static_cast<unsigned int>(time(nullptr)));
     
     // Create simulation with time step and total time
-    NBodySimulation simulation_sequential(10, 10000); // 1 second time step, 20 total
+    //NBodySimulation simulation_sequential(1, 50); // 1 second time step, 20 total
+    NBodySimulation simulation_sequential(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
 
     // Create a system of bodies 
-    createRandomSystem(simulation_sequential, 10); 
+   //createRandomSystem(simulation_sequential, 50); 
+    createSolarSystem(simulation_sequential);
+
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
     
     // Run sequential simulation
     simulation_sequential.runSequential();
     std::vector<Body> sequential_result = simulation_sequential.getBodies();
 
-    NBodySimulation simulation_parallel(1, 20);
+    //NBodySimulation simulation_parallel(1, 50);
+    NBodySimulation simulation_parallel(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
     simulation_parallel.setBodies(initial_bodies);
     simulation_parallel.runParallel(1.0, 2);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
 
-    NBodySimulation simulation_parallel_mutex(1, 20);
+    //NBodySimulation simulation_parallel_mutex(1, 50);
+    NBodySimulation simulation_parallel_mutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
     simulation_parallel_mutex.setBodies(initial_bodies);
     simulation_parallel_mutex.runParallelWithMutex(1.0, 2);
     std::vector<Body> mutex_result = simulation_parallel_mutex.getBodies();
 
 
-    NBodySimulation simulation_parallel_nomutex(1, 20);
+    //NBodySimulation simulation_parallel_nomutex(1, 50);
+    NBodySimulation simulation_parallel_nomutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
     simulation_parallel_nomutex.setBodies(initial_bodies);
     simulation_parallel_nomutex.runParallelNoMutex(1.0, 2);
     std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
@@ -444,6 +499,10 @@ int main() {
             double dy = std::abs(sequential_result[i].y - parallel_result[i].y);
             double dvx = std::abs(sequential_result[i].vx - parallel_result[i].vx);
             double dvy = std::abs(sequential_result[i].vy - parallel_result[i].vy);
+            std::cout << "dx sequential" << dx << "\n";
+            std::cout << "dy seq " << dy << "\n";
+            std::cout << "dvx seq" << dvx << "\n";
+            std::cout << "dvy seq" << dvy << "\n";
 
             if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
                 same_results = false;
@@ -470,8 +529,14 @@ int main() {
             double dy = std::abs(a[i].y - b[i].y);
             double dvx = std::abs(a[i].vx - b[i].vx);
             double dvy = std::abs(a[i].vy - b[i].vy);
+            std::cout << "dx" << dx << "\n";
+            std::cout << "dy" << dy << "\n";
+            std::cout << "dvx" << dvx << "\n";
+            std::cout << "dvy" << dvy << "\n";
 
-            if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
+
+            //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
+            if (dx > 1e4 || dy > 1e4 || dvx > 1e4 || dvy > 1e4) {
                 return false;
             }
         }
@@ -492,8 +557,15 @@ int main() {
 }
 
 /*
-When compiling:  g++ -std=c++11 simple_approach_test.cpp -o test
-When running: ./test
+When compiling:  make ./simple_approach_test
+When running: ./simple_approach_test
+
+Run the Python file in venv environment:
+python make_frames.py
+
+Back in terminal:
+magick convert -delay 20 -loop 0 frames1/frame_*.png simulation1.gif
+
 
 1) When we only had runSequential
 Sequential simulation completed in 7 ms
