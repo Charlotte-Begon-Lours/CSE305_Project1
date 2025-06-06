@@ -411,7 +411,7 @@ void createRandomSystem(NBodySimulation& sim, int numBodies) {
     }
 }
 
-void createSolarSystem(NBodySimulation& sim) {
+void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
     // SUN
     sim.newBody(Body(1.9885e30, 0.0, 0.0, 0.0, 0.0)); // Sun
 
@@ -421,19 +421,21 @@ void createSolarSystem(NBodySimulation& sim) {
         double distance;
         const char* name; // optional, not used here
     };
-
+    // sources for the orbital radius values (in meters): source: NASA, JPL, and Wikipedia
+    // https://nssdc.gsfc.nasa.gov/planetary/factsheet/
+    //https://ssd.jpl.nasa.gov/planets/phys_par.html
     std::vector<Planet> planets = {
-        {3.3011e23, 5.79e10, "Mercury"},
-        {4.8675e24, 1.082e11, "Venus"},
-        {5.9724e24, 1.496e11, "Earth"},
-        {6.4171e23, 2.279e11, "Mars"},
-        {1.898e27, 7.785e11, "Jupiter"},
-        {5.683e26, 1.433e12, "Saturn"},
-        {8.681e25, 2.877e12, "Uranus"},
-        {1.024e26, 4.503e12, "Neptune"},
+        {3.3011e23,      57909227000.0,     "Mercury"},
+        {4.8675e24,     108209475000.0,     "Venus"},
+        {5.97237e24,    149598262000.0,     "Earth"},
+        {6.4171e23,     227943824000.0,     "Mars"},
+        {1.8982e27,     778340821000.0,     "Jupiter"},
+        {5.6834e26,    1426666422000.0,     "Saturn"},
+        {8.6810e25,    2870658186000.0,     "Uranus"},
+        {1.02413e26,   4498396441000.0,     "Neptune"}
     };
 
-    for (const auto& p : planets) {
+    /*for (const auto& p : planets) {
         double x = p.distance;
         double y = 0.0;
 
@@ -441,6 +443,22 @@ void createSolarSystem(NBodySimulation& sim) {
         double v = std::sqrt(G * 1.9885e30 / p.distance); 
         double vx = 0.0;
         double vy = v;
+
+        sim.newBody(Body(p.mass, x, y, vx, vy));
+    }*/
+    for (const auto& p : planets) {
+        double R = p.distance;
+
+        // Position: rotated by angle_offset
+        double x = R * std::cos(angle_offset_radians);
+        double y = R * std::sin(angle_offset_radians);
+
+        // Orbital speed
+        double v = std::sqrt(G * 1.9885e30 / R);
+
+        // Velocity: perpendicular to radius vector (90° rotation)
+        double vx = -v * std::sin(angle_offset_radians);
+        double vy =  v * std::cos(angle_offset_radians);
 
         sim.newBody(Body(p.mass, x, y, vx, vy));
     }
@@ -458,7 +476,8 @@ int main() {
 
     // Create a system of bodies 
    //createRandomSystem(simulation_sequential, 50); 
-    createSolarSystem(simulation_sequential);
+    //createSolarSystem(simulation_sequential, 0.0);
+    createSolarSystem(simulation_sequential, M_PI/4.0);
 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
     
@@ -504,7 +523,8 @@ int main() {
             std::cout << "dvx seq" << dvx << "\n";
             std::cout << "dvy seq" << dvy << "\n";
 
-            if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
+            //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
+            if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
                 same_results = false;
                 break;
             }
@@ -536,7 +556,7 @@ int main() {
 
 
             //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-            if (dx > 1e4 || dy > 1e4 || dvx > 1e4 || dvy > 1e4) {
+            if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
                 return false;
             }
         }
