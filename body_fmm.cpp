@@ -9,35 +9,34 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <random>
+#include <complex> 
 #include <fstream>
-
-////////////////////////////////////////////////////////////////////////////////////////
-//////////////// DEFINING CONSTANTS AND USEFUL FUNCTIONS  //////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////
 
 #define G 6.67430e-11 // Gravity constant
 #define NOT_ZERO 1e-9 // constant to avoid division by zero
+#define THETA 0.1 // Barnes hut approximation parameter
 
-// Constants for Barnes-Hutt Algorithm
-const int MAX_BODIES = 1000; 
-const int MAX_NODES = 10 * MAX_BODIES;
-const double THETA = 0.5; // Barnes-Hut threshold
-const double SOFTENING = 1e-3; // suggested as an improvement by chatgpt, avoid infinity when two bodies get very close to each other
-const double MIN_SUBDIVIDE = 1e3; // this can be adapted to the system we study (should be smaller than the expected distances between bodies, 100 seems adapted for the solar system)
+// constants for the FMM method :
+#define P 20 // number of multipole/local expansion terms
+#define MAX_BODIES_PER_CELL 2. // maximum number of bodies per leaf cell
 
 double sqr(double x) {
     return x*x;
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-//////////// DEFINING BODY CLASS TO BE ABLE TO MANIPULATE THEM BETTER //////////////////
-////////////////////////////////////////////////////////////////////////////////////////
+using Complex = std::complex<double>;
+
+// _______________________________________________________________________________________________________
+// Structure to represent a body in 2D space 
 class Body {
 public:
     double mass;     // of the body
     double x, y;     // position coordinates
     double vx, vy;   // velocity components
     double fx, fy;   // Force components
+    Complex position;
+
 
     Body(double m, double x_pos, double y_pos, double vel_x, double vel_y)
         : mass(m), x(x_pos), y(y_pos), vx(vel_x), vy(vel_y), fx(0.0), fy(0.0) {} //constructor
@@ -95,183 +94,300 @@ public:
         this->x += dt * vx;
         this->y += dt * vy;
     }
+
+    std::complex<double> get_position() const {
+        std::complex<double> position(x, y);
+        return position;}
+    
+    std::complex<double> get_velocity() const {
+        std::complex<double> velocity(vx, vy);
+        return velocity;}
+    
+    std::complex<double> get_force() const {
+        std::complex<double> force(fx, fy);
+        return force;}
     
 };
 
-////////////////////////////////////////////////////////////////////////////////////////
-//////////// DEFINING QUADTREE STRUCTURE FOR THE BARNES-HUTT ALGORITHM ////////////////
-////////////////////////////////////////////////////////////////////////////////////////
+// _______________________________________________________________________________________________________
 
 
-struct QuadNode {
-    bool hasBody = false;
-    int children[4] = {-1, -1, -1, -1};
-    int bodyIndex = -1;
+class BBox{ // class bounding box for the FMM method
+public: 
+    double xmin; 
+    double xmax;
+    double ymin; 
+    double ymax;
 
-    double centerX, centerY; // Center or the region the node is in
-    double halfSize; // half of a side of the square it is in
-    double mass = 0.0; // total mass of the region
-    double comX = 0.0; // center of mass of the region
-    double comY = 0.0;
+    BBox(double xmin = 0, double xmax = 1, double ymin = 0, double ymax = 1)
+        : xmin(xmin), xmax(xmax), ymin(ymin), ymax(ymax) {}
+    
+    std::complex<double> get_center() const {
+        std::complex<double> center((xmin + xmax) / 2, (ymin + ymax) / 2);
+         return center;}
+
+    std::complex<double> get_position(Body& body) const {
+        std::complex<double> position(body.x, body.y);
+        return position;}
+
+    double size() const { return std::max(xmax - xmin, ymax - ymin); }
+    
+    bool contains(const std::complex<double> & point) const {
+        return point.real() >= xmin && point.real() <= xmax &&
+               point.imag() >= ymin && point.imag() <= ymax;
+    }
+
 };
 
-
-class Quadtree {
+class FMMNode {
 public:
-    Quadtree() : nodeCount(0) {}
-
-    void reset() { 
-        nodeCount = 0; 
+    BBox bbox;
+    std::vector<int> body_id;
+    std::vector<std::unique_ptr<FMMNode>> children;
+    bool is_leaf;
+    
+    // FMM coefficients
+    std::vector<std::complex<double>> multipole_coeffs;  // a_k coefficients
+    std::vector<std::complex<double>> local_coeffs;      // b_k coefficients
+    std::complex<double> center;
+    
+    FMMNode(const BBox& box) : bbox(box), is_leaf(true), center(box.get_center()) {
+        multipole_coeffs.resize(P, 0.0);
+        local_coeffs.resize(P, 0.0);
     }
-
-    QuadNode quadtree[MAX_NODES];
-    int nodeCount;
-
-    // Create a new node
-    int createNode(double cx, double cy, double hs) {
-        if (nodeCount >= MAX_NODES) {
-            std::cerr << "Error: Maximum number of nodes exceeded\n";
-            std::exit(1); // interrupt the program directly
-        }
-        int id = nodeCount++;
-        quadtree[id] = QuadNode();
-        quadtree[id].centerX = cx;
-        quadtree[id].centerY = cy;
-        quadtree[id].halfSize = hs;
-        return id;
-    }
-
-    // Determine which quadrant a body b belongs to (value between 0 and 3)
-    int getQuadrant(const QuadNode& node, const Body& b) {
-        int quad = 0;
-        if (b.x > node.centerX) quad += 1;
-        if (b.y > node.centerY) quad += 2;
-        return quad;
-    }
-
-    // insert a body 'b' of index 'body_index' into the tree rooted at node 'x' of index 'node_index'
-    void insert(int node_index, int body_index, std::vector<Body>& bodies) {
-        QuadNode& node_x = quadtree[node_index];
-        Body& body_b = bodies[body_index];
-
-        // 0. Check that you're not subdiving too much - added after encountering infinite loops due to poorly chosen domainSize
-        if (node_x.halfSize <= MIN_SUBDIVIDE) {
-            std::cerr << "Error: The space has been subdivided below 1e3, check you have chosen the write domainSize. Otherwise adjust MIN_SUBDIVIDE\n";
-            return;
-        }
-        // 1. If node x does not contain a body, 
-        if (!node_x.hasBody && node_x.bodyIndex == -1 && node_x.children[0] == -1) { // double check there is no body + check that it is not an internal node
-            // put the new body b here.
-            node_x.bodyIndex = body_index;
-            node_x.hasBody = true;
-            node_x.mass = body_b.mass;
-            node_x.comX = body_b.x;
-            node_x.comY = body_b.y;
-            return;
-        } 
-        
-        else {
-            // 3. If node x is an external node, say containing a body named c.   
-            // Since b and c may still end up in the same quadrant, there may be several subdivisions during a single insertion. 
-            // Finally, update the center-of-mass and total mass of x.
-            if (node_x.hasBody) { // then it is necesseraly an external node containing a body
-                // then there are two bodies b and c in the same region.
-                int body_c_index = node_x.bodyIndex;
-                Body& body_c = bodies[body_c_index];
-                // we take body_c out of node_x
-                node_x.bodyIndex = -1;
-                node_x.hasBody = false;
-
-                // Subdivide the region further by creating four children. chatGPT coded this part.
-                for (int i = 0; i < 4; ++i) {
-                    double offsetX = (i % 2 == 0 ? -0.5 : 0.5) * node_x.halfSize;
-                    double offsetY = (i < 2 ? -0.5 : 0.5) * node_x.halfSize;
-                    node_x.children[i] = createNode(
-                        node_x.centerX + offsetX,
-                        node_x.centerY + offsetY,
-                        node_x.halfSize / 2
-                    );
-                }
-
-                // Then, recursively insert both b and c into the appropriate quadrant(s).
-                int oldQuad = getQuadrant(node_x, body_c); // find the quadrant in which c was in
-                insert(node_x.children[oldQuad], body_c_index, bodies); // insert body c into a child quadrant
-            }
-
-            // 3. and 2. If node x is an internal node, recursively insert the body b in the appropriate quadrant.
-            int quad = getQuadrant(node_x, body_b);
-            insert(node_x.children[quad], body_index, bodies);
-        }
-
-        // Update total mass and center of mass
-        double totalMass = 0.0;
-        double weightedX = 0.0;
-        double weightedY = 0.0;
-
-        for (int i=0; i<4; ++i) {
-            int childID = node_x.children[i];
-            if (childID == -1) continue;
-            QuadNode& child = quadtree[childID];
-            totalMass += child.mass;
-            weightedX += child.comX*child.mass;
-            weightedY += child.comY*child.mass;
-        }
-
-        node_x.mass = totalMass;
-        node_x.comX = weightedX/totalMass;
-        node_x.comY = weightedY/totalMass;
-
-    }
-
-    // calculate the net force acting on body b
-    void computeForce(int nodeID, Body& b, std::vector<Body>& bodies) {
-        // Uninitialized node
-        if (nodeID == -1) {
-            return;
-        }
-
-        QuadNode& node = quadtree[nodeID];
-        // Node with 0 mass
-        if (node.mass == 0) return;
-
-        double dx = node.comX - b.x;
-        double dy = node.comY - b.y;
-        double dist = sqrt(dx * dx + dy * dy + SOFTENING * SOFTENING);
-
-        // If the current node is an external node and is the body b
-        if (node.hasBody && node.bodyIndex == (&b - &bodies[0])) {
-            return;
-        }
-
-        // If the current node is an external node with a body different from b and s/d < θ
-        if (node.hasBody || node.halfSize / dist < THETA) {
-            // calculate the force it exerts on body b
-            double F = G * b.mass * node.mass / (dist * dist + SOFTENING * SOFTENING);
-            // add this amount to b’s net force
-            b.fx += F * dx / dist;
-            b.fy += F * dy / dist;
-
-        // If the current node is an external node with a body different from b and s/d >= θ
-        } else {
-            // run the procedure recursively on each of the current node’s children.
-            for (int i = 0; i < 4; ++i) {
-                computeForce(node.children[i], b, bodies);
-            }
-        }
-    }
-
-    // Integrate position and velocity using semi-implicit Euler
-    void update_pos_vel(std::vector<Body>& bodies, double dt) {
-        for (Body& b : bodies) {
-            b.updatePosition(dt);
-            b.updateVelocity(dt);
+    
+    void subdivide() {
+        if (is_leaf && body_id.size() > MAX_BODIES_PER_CELL) {
+            is_leaf = false;
+            children.resize(4);
+            
+            double midx = (bbox.xmin + bbox.xmax) / 2;
+            double midy = (bbox.ymin + bbox.ymax) / 2;
+            
+            // divide the previoux box by 2 
+            children[0] = std::make_unique<FMMNode>(BBox(bbox.xmin, midx, bbox.ymin, midy)); // SW
+            children[1] = std::make_unique<FMMNode>(BBox(midx, bbox.xmax, bbox.ymin, midy)); // SE
+            children[2] = std::make_unique<FMMNode>(BBox(bbox.xmin, midx, midy, bbox.ymax)); // NW
+            children[3] = std::make_unique<FMMNode>(BBox(midx, bbox.xmax, midy, bbox.ymax)); // NE
         }
     }
 };
+// FMM solver
+class FMMSolver {
+private:
+    std::vector<Body> bodies;
+    std::unique_ptr<FMMNode> root;
+    BBox box;
+    
+public:
+    FMMSolver(const std::vector<Body>& bodies, const BBox& box) 
+        : bodies(bodies), box(box) {
+        root = std::make_unique<FMMNode>(box);
+    }
 
-////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////// CLASS TO RUN ALL SIMULATIONS ///////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////
+    void setBodies(const std::vector<Body>& newBodies) { 
+        bodies = newBodies; 
+    }
+
+    const std::vector<Body>& getBodies() { 
+        return bodies; 
+    }
+    void buildTree() {
+        root = std::make_unique<FMMNode>(box);
+        
+        // Add all particles to root
+        for (int i = 0; i < bodies.size(); ++i) {
+            root->body_id.push_back(i);
+        }
+        
+        buildTreeRecursive(root.get());
+    }
+    
+    void buildTreeRecursive(FMMNode* node) {
+        if (node->body_id.size() <= MAX_BODIES_PER_CELL) {
+            return; // leaf node
+        }
+        
+        node->subdivide();
+        
+        // distribute particles to children
+        for (int idx : node->body_id) {
+            for (auto& child : node->children) {
+                std::complex<double> pos(bodies[idx].x, bodies[idx].y);
+                if (child->bbox.contains(pos)) {
+                    child->body_id.push_back(idx);
+                    break;
+                }
+            }
+        }
+        
+        node->body_id.clear(); 
+        
+        // Recursively build children
+        for (auto& child : node->children) {
+            if (!child->body_id.empty()) {
+                buildTreeRecursive(child.get());
+            }
+        }
+    }
+    
+    void computeMultipoleExpansions() {
+        computeMultipoleRecursive(root.get());
+    }
+    
+    void computeMultipoleRecursive(FMMNode* node) {
+        if (node->is_leaf) {
+            // compute multipole expansion for leaf node
+            node->multipole_coeffs[0] = 0.0;
+            for (int idx : node->body_id) {
+                const Body& p = bodies[idx];
+                Complex z = p.get_position() - node->center;
+                
+                node->multipole_coeffs[0] += p.mass; // total mass
+                
+                Complex z_pow = 1.0;
+                for (int k = 1; k < P; ++k) {
+                    z_pow *= -z; 
+                    node->multipole_coeffs[k] += p.mass * z_pow / double(k);
+                }
+            }
+        } else {
+            // compute multipole expansion from children
+            fill(node->multipole_coeffs.begin(), node->multipole_coeffs.end(), 0.0);
+            
+            for (auto& child : node->children) {
+                if (child && !child->body_id.empty()) {
+                    computeMultipoleRecursive(child.get());
+                    
+                    // translate child's multipole expansion to parent center
+                    Complex z0 = child->center - node->center;
+                    translateMultipole(child->multipole_coeffs, node->multipole_coeffs, z0);
+                }
+            }
+        }
+    }
+    
+    void translateMultipole(const std::vector<Complex>& source, std::vector<Complex>& target, Complex z0) {
+        target[0] += source[0];
+        
+        for (int k = 1; k < P; ++k) {
+            Complex sum = source[k];
+            Complex z0_pow = 1.0;
+            
+            for (int j = 1; j < k; ++j) {
+                z0_pow *= z0;
+                sum += source[k-j] * z0_pow / double(j);
+            }
+            
+            target[k] += sum;
+        }
+    }
+    
+    void computeForces() {
+        //Reset forces
+        for (auto& p : bodies) {
+            p.fx = 0.0;
+            p.fy = 0.0;
+        }
+        
+        computeForcesRecursive(root.get(), root.get());
+    }
+    
+    void computeForcesRecursive(FMMNode* source, FMMNode* target) {
+        if (!source || !target || source->body_id.empty() || target->body_id.empty()) {
+            return;
+        }
+        
+        Complex r = target->center - source->center;
+        double distance = abs(r);
+        double source_size = source->bbox.size();
+        
+        // Barnes-Hut criterion
+        if (source != target && source_size / distance < THETA) {
+            // Use multipole approximation
+            applyMultipoleForce(source, target);
+        } else if (source->is_leaf && target->is_leaf) {
+            // Direct particle-particle interaction
+            directInteraction(source, target);
+        } else {
+            // Recurse to children
+            if (!source->is_leaf) {
+                for (auto& child : source->children) {
+                    computeForcesRecursive(child.get(), target);
+                }
+            } else {
+                for (auto& child : target->children) {
+                    computeForcesRecursive(source, child.get());
+                }
+            }
+        }
+    }
+    
+    void applyMultipoleForce(FMMNode* source, FMMNode* target) {
+        Complex z0 = target->center - source->center;
+        
+        for (int target_idx : target->body_id) {
+            Body& p = bodies[target_idx];
+            Complex z = p.get_position() - source->center;
+            double r = std::abs(z);
+            if (r < 1e-10) continue;
+
+            double force_mag = G * p.mass * source->multipole_coeffs[0].real() / (r * r);
+            Complex force = z / r; 
+
+            p.fx += G * p.mass * force.real();
+            p.fy += G * p.mass * force.imag();
+        }
+    }
+    
+    void directInteraction(FMMNode* source, FMMNode* target) {
+        for (int i : source->body_id) {
+            for (int j : target->body_id) {
+                if (i != j) {
+                    const Body& pi = bodies[i];
+                    Body& pj = bodies[j];
+                    
+                    Complex r = pj.get_position() - pi.get_position();
+                    double dist = abs(r);
+                    
+                    if (dist > 1e-10) { // Avoid division by zero
+                        Complex force_dir = r / dist;
+                        double force_mag = G * pi.mass * pj.mass / (dist * dist);
+                        pj.fx += force_mag * force_dir.real();
+                        pj.fy += force_mag * force_dir.imag();
+                    }
+                }
+            }
+        }
+    }
+    
+    void updateParticles(double dt) {
+        for (auto& p : bodies) {
+            // Leapfrog integration
+            p.updateVelocity(dt);
+            p.updatePosition(dt);
+        }
+    }
+    
+    void simulate(double dt, int steps) {
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int step = 0; step < steps; ++step) {
+            buildTree();
+            computeMultipoleExpansions();
+            computeForces();
+            updateParticles(dt);
+            
+        }
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        std::cout << "Parallel simulation completed in " << duration << " ms" << std::endl;
+    }
+
+    const std::vector<Body>& getParticles() const { return bodies; }
+
+};
+
+// _______________________________________________________________________________________________________
 
 class NBodySimulation {
 private:
@@ -305,15 +421,8 @@ public:
         std::ofstream file("positions_sequential.csv");
         if (!file.is_open()) {
             std::cerr << "Failed to open the file." << std::endl;
-            return;
-        }
-
-        for (size_t i = 0; i < bodies.size(); ++i) {
-            file << bodies[i].mass;
-            if (i != bodies.size() - 1) file << ',';
-        }
-        file << '\n';
-
+        return;
+    }
         auto startTime = std::chrono::high_resolution_clock::now();
         
         // Main loop
@@ -326,26 +435,20 @@ public:
             }
             
             // calculate forces between all pairs of bodies
-            /*for (size_t i = 0; i < bodies.size(); ++i) {
+            for (size_t i = 0; i < bodies.size(); ++i) {
                 for (size_t j = 0; j < bodies.size(); ++j) {
                     if (i != j) {
                         bodies[i].Force(bodies[j]);
-                        std::cout << "Force on body " << i << ": (" << bodies[i].fx << ", " << bodies[i].fy << ")" << std::endl;
+                        //std::cout << "Force on body " << i << ": (" << bodies[i].fx << ", " << bodies[i].fy << ")" << std::endl;
                     }
                 }
-            }*/
-            for (size_t i = 0; i < bodies.size(); ++i) {
-                for (size_t j = i + 1; j < bodies.size(); ++j) {
-                    bodies[i].OptimizedForce(bodies[j]);
-                }
             }
-
             
             // update velocities and positions
             for (auto& body : bodies) {
                 body.updateVelocity(timeStep);
                 body.updatePosition(timeStep);
-                std::cout << "Body position: (" << body.x << ", " << body.y << ")" << std::endl;
+                //std::cout << "Body position: (" << body.x << ", " << body.y << ")" << std::endl;
                 file << body.x << ',' << body.y << ',';
             }
             file << "\n";
@@ -573,26 +676,9 @@ public:
                   << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count()
                   << " ms" << std::endl;
     }
-
-    void runBarnesHutt(double domainSize, double dt) {
-        Quadtree tree;
-
-        for (int step = 0; step < numSteps; ++step) {
-            tree.reset();
-            int root = tree.createNode(0.0, 0.0, domainSize / 2.0);
-
-            for (int i = 0; i < bodies.size(); ++i) {
-                tree.insert(root, i, bodies);
-            }
-
-            for (Body& b : bodies) {
-                b.fx = b.fy = 0.0;
-                tree.computeForce(root, b, bodies);
-            }
-            tree.update_pos_vel(bodies, dt);
-        }
-    }
 };
+
+// _______________________________________________________________________________________________________
 
 //////////////// to test
 void createRandomSystem(NBodySimulation& sim, int numBodies) {
@@ -616,112 +702,57 @@ void createRandomSystem(NBodySimulation& sim, int numBodies) {
         sim.newBody(Body(mass, x, y, vx, vy));
     }
 }
-
-void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
-    // SUN
-    sim.newBody(Body(1.9885e30, 0.0, 0.0, 0.0, 0.0)); // Sun
-
-    // Format: {mass [kg], distance from Sun [m], orbital velocity [m/s]}
-    struct Planet {
-        double mass;
-        double distance;
-        const char* name; // optional, not used here
-    };
-    // sources for the orbital radius values (in meters): source: NASA, JPL, and Wikipedia
-    // https://nssdc.gsfc.nasa.gov/planetary/factsheet/
-    //https://ssd.jpl.nasa.gov/planets/phys_par.html
-    std::vector<Planet> planets = {
-        {3.3011e23,      57909227000.0,     "Mercury"},
-        {4.8675e24,     108209475000.0,     "Venus"},
-        {5.97237e24,    149598262000.0,     "Earth"},
-        {6.4171e23,     227943824000.0,     "Mars"},
-        {1.8982e27,     778340821000.0,     "Jupiter"},
-        {5.6834e26,    1426666422000.0,     "Saturn"},
-        {8.6810e25,    2870658186000.0,     "Uranus"},
-        {1.02413e26,   4498396441000.0,     "Neptune"}
-    };
-
-    /*for (const auto& p : planets) {
-        double x = p.distance;
-        double y = 0.0;
-
-        // Orbital speed: circular orbit approximation
-        double v = std::sqrt(G * 1.9885e30 / p.distance); 
-        double vx = 0.0;
-        double vy = v;
-
-        sim.newBody(Body(p.mass, x, y, vx, vy));
-    }*/
-    for (const auto& p : planets) {
-        double R = p.distance;
-
-        // Position: rotated by angle_offset
-        double x = R * std::cos(angle_offset_radians);
-        double y = R * std::sin(angle_offset_radians);
-
-        // Orbital speed
-        double v = std::sqrt(G * 1.9885e30 / R);
-
-        // Velocity: perpendicular to radius vector (90° rotation)
-        double vx = -v * std::sin(angle_offset_radians);
-        double vy =  v * std::cos(angle_offset_radians);
-
-        sim.newBody(Body(p.mass, x, y, vx, vy));
-    }
-
-}
-
 ///////////////////////
 
+
+// _______________________________________________________________________________________________________
 int main() {
     // Set random seed
     srand(static_cast<unsigned int>(time(nullptr)));
     
+    double num_bodies = 30; 
+    double timestep = 1;
+    double total_time = 20;
+
+
+    std::cout << "N-Body simulation"<< std::endl;
+    std::cout << "number of bodies: " << num_bodies << std::endl;
+
     // Create simulation with time step and total time
-    //NBodySimulation simulation_sequential(1, 50); // 1 second time step, 20 total
-    NBodySimulation simulation_sequential(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+    NBodySimulation simulation_sequential(timestep, total_time); // 1 second time step, 20 total
 
     // Create a system of bodies 
-   //createRandomSystem(simulation_sequential, 50); 
-    //createSolarSystem(simulation_sequential, 0.0);
-    createSolarSystem(simulation_sequential, M_PI/4.0);
-
+    createRandomSystem(simulation_sequential, num_bodies); 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
-    std::cout << "TOTAL NUMBER OF BODIES" << initial_bodies.size() << "\n";
     
+
     // Run sequential simulation
     simulation_sequential.runSequential();
     std::vector<Body> sequential_result = simulation_sequential.getBodies();
 
-    //NBodySimulation simulation_parallel(1, 50);
-    NBodySimulation simulation_parallel(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+
+    // run paralllel
+    NBodySimulation simulation_parallel(1, total_time);
     simulation_parallel.setBodies(initial_bodies);
     simulation_parallel.runParallel(1.0, 2);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
-
-    //NBodySimulation simulation_parallel_mutex(1, 50);
-    NBodySimulation simulation_parallel_mutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+    // run parallel with mutex 
+    NBodySimulation simulation_parallel_mutex(1, total_time);
     simulation_parallel_mutex.setBodies(initial_bodies);
     simulation_parallel_mutex.runParallelWithMutex(1.0, 2);
     std::vector<Body> mutex_result = simulation_parallel_mutex.getBodies();
 
 
-    //NBodySimulation simulation_parallel_nomutex(1, 50);
-    NBodySimulation simulation_parallel_nomutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+    // run parallel without mutex
+    NBodySimulation simulation_parallel_nomutex(1, total_time);
     simulation_parallel_nomutex.setBodies(initial_bodies);
     simulation_parallel_nomutex.runParallelNoMutex(1.0, 2);
     std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
 
-    //NBodySimulation for Barnes Hutt 
-    NBodySimulation simulation_barneshutt(3600 * 24, 3600 * 24 * 365);
-    simulation_barneshutt.setBodies(initial_bodies);
-    double domainSize = 1e13;// should be large enough to include all bodies
-    simulation_barneshutt.runBarnesHutt(domainSize, 1.0); // timestep = 1.0
-    std::vector<Body> barneshutt_result = simulation_barneshutt.getBodies();
-
-
     //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
+    std::cout << "compare results of parallel and sequential "<< std::endl;
+    std::cout << "\n";
     bool same_results = true;
 
     if (sequential_result.size() != parallel_result.size()) {
@@ -731,16 +762,15 @@ int main() {
     else {
         for (size_t i=0; i < sequential_result.size(); ++i) {
             double dx = std::abs(sequential_result[i].x - parallel_result[i].x);
+            //std::cout << "dx : " << dx << std::endl;
             double dy = std::abs(sequential_result[i].y - parallel_result[i].y);
+            //std::cout << "dy : " << dy << std::endl;
             double dvx = std::abs(sequential_result[i].vx - parallel_result[i].vx);
+            //std::cout << "vx : " << dvx << std::endl;
             double dvy = std::abs(sequential_result[i].vy - parallel_result[i].vy);
-            std::cout << "dx sequential" << dx << "\n";
-            std::cout << "dy seq " << dy << "\n";
-            std::cout << "dvx seq" << dvx << "\n";
-            std::cout << "dvy seq" << dvy << "\n";
+            //std::cout << "vy : " << dvy << std::endl;
 
-            //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-            if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
+            if (dx > 1e-6 || dy > 1e-5 ) {
                 same_results = false;
                 break;
             }
@@ -757,22 +787,21 @@ int main() {
 
     ////////////// 
     // Compare results of parallel and mutex 
+    std::cout << "compare results of sequential and mutex "<< std::endl;
     auto compareResults = [](const std::vector<Body>& a, const std::vector<Body>& b) {
         if (a.size() != b.size()) return false;
 
         for (size_t i = 0; i < a.size(); ++i) {
             double dx = std::abs(a[i].x - b[i].x);
+            //std::cout << "dx : " << dx << std::endl;
             double dy = std::abs(a[i].y - b[i].y);
+            //std::cout << "dy : " << dy << std::endl;
             double dvx = std::abs(a[i].vx - b[i].vx);
+            //std::cout << "dvx : " << dvx << std::endl;
             double dvy = std::abs(a[i].vy - b[i].vy);
-            std::cout << "dx" << dx << "\n";
-            std::cout << "dy" << dy << "\n";
-            std::cout << "dvx" << dvx << "\n";
-            std::cout << "dvy" << dvy << "\n";
-
-
-            //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-            if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
+            //std::cout << "dvy : " << dvy << std::endl;
+            //std::cout << "\n"<< std::endl;
+            if (dx > 1e-1 || dy > 1e-1 || dvx > 1e-2 || dvy > 1e-2) {
                 return false;
             }
         }
@@ -780,72 +809,92 @@ int main() {
     };
     if (compareResults(sequential_result, mutex_result)) {
         std::cout << "OK." << std::endl;
+        std::cout << "\n";
     } else {
         std::cout << "Mutex and sequential simulations grant different results" << std::endl;
+        std::cout << "\n";
     }
+
+    std::cout << "compare results of sequential and no mutex "<< std::endl;
     if (compareResults(sequential_result, nomutex_result)) {
         std::cout << "OK." << std::endl;
+        std::cout << "\n";
     } else {
         std::cout << "No mutex version and sequential simulations grant different results" << std::endl;
-    }
-    
-    
-
-
-    ////// Compare results of sequential and barnes hutt
-
-    same_results = true;
-
-    if (sequential_result.size() != barneshutt_result.size()) {
-        same_results = false;
-    } 
-    
-    else {
-        for (size_t i=0; i < sequential_result.size(); ++i) {
-            double dx = std::abs(sequential_result[i].x - barneshutt_result[i].x);
-            double dy = std::abs(sequential_result[i].y - barneshutt_result[i].y);
-            double dvx = std::abs(sequential_result[i].vx - barneshutt_result[i].vx);
-            double dvy = std::abs(sequential_result[i].vy - barneshutt_result[i].vy);
-            std::cout << "dx sequential" << dx << "\n";
-            std::cout << "dy seq " << dy << "\n";
-            std::cout << "dvx seq" << dvx << "\n";
-            std::cout << "dvy seq" << dvy << "\n";
-
-            if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-                same_results = false;
-                break;
-            }
-        }
+        std::cout << "\n";
     }
 
-    if (same_results) {
+
+    /* Run FMM method */
+    std::cout << "testing Finite Multiple Method FMM, L. Greengard and V. Rokhlin"<< std::endl;
+
+
+    double max_coord = 0;
+    for (const auto& body : initial_bodies) {
+        max_coord = std::max(max_coord, std::max(std::abs(body.x), std::abs(body.y)));
+    }
+    max_coord *= 1.2; // Add some margin
+    
+    BBox box(-max_coord, max_coord, -max_coord, max_coord);
+    
+    // FIXED: Use the same initial_bodies for FMM
+    FMMSolver solver(initial_bodies, box);
+    solver.setBodies(initial_bodies);
+    
+    // Run FMM simulation with same parameters
+    solver.simulate(timestep, total_time / timestep);
+    std::vector<Body> results_fmm = solver.getParticles();
+
+
+    // Compare results
+    std::cout << "\nCompare results FMM and sequential" << std::endl;
+    std::cout << "Sequential results size: " << sequential_result.size() << std::endl;
+    std::cout << "FMM results size: " << results_fmm.size() << std::endl;
+
+
+    std::cout << "compare results FMM and sequential" << std::endl;
+    if (compareResults(sequential_result, results_fmm)) {
         std::cout << "OK." << std::endl;
+        std::cout << "\n";
     } else {
-        std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
+        std::cout << "FMM method and sequential simulations grant different results" << std::endl;
+        std::cout << "\n";
     }
+
+    std::cout << "testing Finite Multiple Method FMM, L. Greengard and V. Rokhlin"<< std::endl;
+
     return 0;
 }
 
 /*
-When compiling:  make ./simple_approach_test
-When running: ./simple_approach_test
-
-Run the Python file in venv environment:
-python make_frames.py
-
-Back in terminal:
-magick convert -delay 20 -loop 0 frames1/frame_*.png simulation1.gif
+When compiling:  g++ -std=c++11 body_fmm.cpp -o bodies
+When running: ./bodies
 
 
-1) When we only had runSequential
-Sequential simulation completed in 7 ms
+Example simulation : 
 
-2) When we added parallelization
-Sequential simulation completed in 7 ms
-Parallel simulation completed in 13 ms
+N-Body simulation
+number of bodies: 30
+Sequential simulation completed in 1 ms
+Parallel simulation completed in 1 ms
+Parallel simulation with mutex completed in 5 ms
+Parallel simulation without mutex completed in 10 ms
+compare results of parallel and sequential 
 
-3) When we avoided computing Fij twice
-Sequential simulation completed in 9 ms
-Parallel simulation completed in 7 ms
+OK.
+compare results of sequential and mutex 
+OK.
+
+compare results of sequential and no mutex 
+OK.
+
+testing Finite Multiple Method FMM, L. Greengard and V. Rokhlin
+Parallel simulation completed in 0 ms
+
+Compare results FMM and sequential
+Sequential results size: 30
+FMM results size: 30
+compare results FMM and sequential
+OK.
 
 */
