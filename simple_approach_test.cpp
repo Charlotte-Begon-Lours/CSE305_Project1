@@ -11,14 +11,27 @@
 #include <iomanip>
 #include <fstream>
 
+////////////////////////////////////////////////////////////////////////////////////////
+//////////////// DEFINING CONSTANTS AND USEFUL FUNCTIONS  //////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
 #define G 6.67430e-11 // Gravity constant
 #define NOT_ZERO 1e-9 // constant to avoid division by zero
+
+// Constants for Barnes-Hutt Algorithm
+const int MAX_BODIES = 1000; 
+const int MAX_NODES = 10 * MAX_BODIES;
+const double THETA = 0.5; // Barnes-Hut threshold
+const double SOFTENING = 1e-3; // suggested as an improvement by chatgpt, avoid infinity when two bodies get very close to each other
+const double MIN_SUBDIVIDE = 1e3; // this can be adapted to the system we study (should be smaller than the expected distances between bodies, 100 seems adapted for the solar system)
 
 double sqr(double x) {
     return x*x;
 }
 
-// Structure to represent a body in 2D space: we use a struct instead of a class as we want to make it publicly accessible in the whole code
+////////////////////////////////////////////////////////////////////////////////////////
+//////////// DEFINING BODY CLASS TO BE ABLE TO MANIPULATE THEM BETTER //////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 class Body {
 public:
     double mass;     // of the body
@@ -85,6 +98,180 @@ public:
     
 };
 
+////////////////////////////////////////////////////////////////////////////////////////
+//////////// DEFINING QUADTREE STRUCTURE FOR THE BARNES-HUTT ALGORITHM ////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
+
+struct QuadNode {
+    bool hasBody = false;
+    int children[4] = {-1, -1, -1, -1};
+    int bodyIndex = -1;
+
+    double centerX, centerY; // Center or the region the node is in
+    double halfSize; // half of a side of the square it is in
+    double mass = 0.0; // total mass of the region
+    double comX = 0.0; // center of mass of the region
+    double comY = 0.0;
+};
+
+
+class Quadtree {
+public:
+    Quadtree() : nodeCount(0) {}
+
+    void reset() { 
+        nodeCount = 0; 
+    }
+
+    QuadNode quadtree[MAX_NODES];
+    int nodeCount;
+
+    // Create a new node
+    int createNode(double cx, double cy, double hs) {
+        if (nodeCount >= MAX_NODES) {
+            std::cerr << "Error: Maximum number of nodes exceeded\n";
+            std::exit(1); // interrupt the program directly
+        }
+        int id = nodeCount++;
+        quadtree[id] = QuadNode();
+        quadtree[id].centerX = cx;
+        quadtree[id].centerY = cy;
+        quadtree[id].halfSize = hs;
+        return id;
+    }
+
+    // Determine which quadrant a body b belongs to (value between 0 and 3)
+    int getQuadrant(const QuadNode& node, const Body& b) {
+        int quad = 0;
+        if (b.x > node.centerX) quad += 1;
+        if (b.y > node.centerY) quad += 2;
+        return quad;
+    }
+
+    // insert a body 'b' of index 'body_index' into the tree rooted at node 'x' of index 'node_index'
+    void insert(int node_index, int body_index, std::vector<Body>& bodies) {
+        QuadNode& node_x = quadtree[node_index];
+        Body& body_b = bodies[body_index];
+
+        // 0. Check that you're not subdiving too much - added after encountering infinite loops due to poorly chosen domainSize
+        if (node_x.halfSize <= MIN_SUBDIVIDE) {
+            std::cerr << "Error: The space has been subdivided below 1e3, check you have chosen the write domainSize. Otherwise adjust MIN_SUBDIVIDE\n";
+            return;
+        }
+        // 1. If node x does not contain a body, 
+        if (!node_x.hasBody && node_x.bodyIndex == -1 && node_x.children[0] == -1) { // double check there is no body + check that it is not an internal node
+            // put the new body b here.
+            node_x.bodyIndex = body_index;
+            node_x.hasBody = true;
+            node_x.mass = body_b.mass;
+            node_x.comX = body_b.x;
+            node_x.comY = body_b.y;
+            return;
+        } 
+        
+        else {
+            // 3. If node x is an external node, say containing a body named c.   
+            // Since b and c may still end up in the same quadrant, there may be several subdivisions during a single insertion. 
+            // Finally, update the center-of-mass and total mass of x.
+            if (node_x.hasBody) { // then it is necesseraly an external node containing a body
+                // then there are two bodies b and c in the same region.
+                int body_c_index = node_x.bodyIndex;
+                Body& body_c = bodies[body_c_index];
+                // we take body_c out of node_x
+                node_x.bodyIndex = -1;
+                node_x.hasBody = false;
+
+                // Subdivide the region further by creating four children. chatGPT coded this part.
+                for (int i = 0; i < 4; ++i) {
+                    double offsetX = (i % 2 == 0 ? -0.5 : 0.5) * node_x.halfSize;
+                    double offsetY = (i < 2 ? -0.5 : 0.5) * node_x.halfSize;
+                    node_x.children[i] = createNode(
+                        node_x.centerX + offsetX,
+                        node_x.centerY + offsetY,
+                        node_x.halfSize / 2
+                    );
+                }
+
+                // Then, recursively insert both b and c into the appropriate quadrant(s).
+                int oldQuad = getQuadrant(node_x, body_c); // find the quadrant in which c was in
+                insert(node_x.children[oldQuad], body_c_index, bodies); // insert body c into a child quadrant
+            }
+
+            // 3. and 2. If node x is an internal node, recursively insert the body b in the appropriate quadrant.
+            int quad = getQuadrant(node_x, body_b);
+            insert(node_x.children[quad], body_index, bodies);
+        }
+
+        // Update total mass and center of mass
+        double totalMass = 0.0;
+        double weightedX = 0.0;
+        double weightedY = 0.0;
+
+        for (int i=0; i<4; ++i) {
+            int childID = node_x.children[i];
+            if (childID == -1) continue;
+            QuadNode& child = quadtree[childID];
+            totalMass += child.mass;
+            weightedX += child.comX*child.mass;
+            weightedY += child.comY*child.mass;
+        }
+
+        node_x.mass = totalMass;
+        node_x.comX = weightedX/totalMass;
+        node_x.comY = weightedY/totalMass;
+
+    }
+
+    // calculate the net force acting on body b
+    void computeForce(int nodeID, Body& b, std::vector<Body>& bodies) {
+        // Uninitialized node
+        if (nodeID == -1) {
+            return;
+        }
+
+        QuadNode& node = quadtree[nodeID];
+        // Node with 0 mass
+        if (node.mass == 0) return;
+
+        double dx = node.comX - b.x;
+        double dy = node.comY - b.y;
+        double dist = sqrt(dx * dx + dy * dy + SOFTENING * SOFTENING);
+
+        // If the current node is an external node and is the body b
+        if (node.hasBody && node.bodyIndex == (&b - &bodies[0])) {
+            return;
+        }
+
+        // If the current node is an external node with a body different from b and s/d < θ
+        if (node.hasBody || node.halfSize / dist < THETA) {
+            // calculate the force it exerts on body b
+            double F = G * b.mass * node.mass / (dist * dist + SOFTENING * SOFTENING);
+            // add this amount to b’s net force
+            b.fx += F * dx / dist;
+            b.fy += F * dy / dist;
+
+        // If the current node is an external node with a body different from b and s/d >= θ
+        } else {
+            // run the procedure recursively on each of the current node’s children.
+            for (int i = 0; i < 4; ++i) {
+                computeForce(node.children[i], b, bodies);
+            }
+        }
+    }
+
+    // Integrate position and velocity using semi-implicit Euler
+    void update_pos_vel(std::vector<Body>& bodies, double dt) {
+        for (Body& b : bodies) {
+            b.updatePosition(dt);
+            b.updateVelocity(dt);
+        }
+    }
+};
+
+////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////// CLASS TO RUN ALL SIMULATIONS ///////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 
 class NBodySimulation {
 private:
@@ -386,6 +573,25 @@ public:
                   << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count()
                   << " ms" << std::endl;
     }
+
+    void runBarnesHutt(double domainSize, double dt) {
+        Quadtree tree;
+
+        for (int step = 0; step < numSteps; ++step) {
+            tree.reset();
+            int root = tree.createNode(0.0, 0.0, domainSize / 2.0);
+
+            for (int i = 0; i < bodies.size(); ++i) {
+                tree.insert(root, i, bodies);
+            }
+
+            for (Body& b : bodies) {
+                b.fx = b.fy = 0.0;
+                tree.computeForce(root, b, bodies);
+            }
+            tree.update_pos_vel(bodies, dt);
+        }
+    }
 };
 
 //////////////// to test
@@ -444,6 +650,7 @@ void createSolarSystem(NBodySimulation& sim) {
 
         sim.newBody(Body(p.mass, x, y, vx, vy));
     }
+
 }
 
 ///////////////////////
@@ -461,6 +668,7 @@ int main() {
     createSolarSystem(simulation_sequential);
 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
+    std::cout << "TOTAL NUMBER OF BODIES" << initial_bodies.size() << "\n";
     
     // Run sequential simulation
     simulation_sequential.runSequential();
@@ -485,6 +693,14 @@ int main() {
     simulation_parallel_nomutex.setBodies(initial_bodies);
     simulation_parallel_nomutex.runParallelNoMutex(1.0, 2);
     std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
+
+    //NBodySimulation for Barnes Hutt 
+    NBodySimulation simulation_barneshutt(3600 * 24, 3600 * 24 * 365);
+    simulation_barneshutt.setBodies(initial_bodies);
+    double domainSize = 1e13;// should be large enough to include all bodies
+    simulation_barneshutt.runBarnesHutt(domainSize, 1.0); // timestep = 1.0
+    std::vector<Body> barneshutt_result = simulation_barneshutt.getBodies();
+
 
     //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
     bool same_results = true;
@@ -553,6 +769,40 @@ int main() {
         std::cout << "No mutex version and sequential simulations grant different results" << std::endl;
     }
     
+    
+
+
+    ////// Compare results of sequential and barnes hutt
+
+    same_results = true;
+
+    if (sequential_result.size() != barneshutt_result.size()) {
+        same_results = false;
+    } 
+    
+    else {
+        for (size_t i=0; i < sequential_result.size(); ++i) {
+            double dx = std::abs(sequential_result[i].x - barneshutt_result[i].x);
+            double dy = std::abs(sequential_result[i].y - barneshutt_result[i].y);
+            double dvx = std::abs(sequential_result[i].vx - barneshutt_result[i].vx);
+            double dvy = std::abs(sequential_result[i].vy - barneshutt_result[i].vy);
+            std::cout << "dx sequential" << dx << "\n";
+            std::cout << "dy seq " << dy << "\n";
+            std::cout << "dvx seq" << dvx << "\n";
+            std::cout << "dvy seq" << dvy << "\n";
+
+            if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
+                same_results = false;
+                break;
+            }
+        }
+    }
+
+    if (same_results) {
+        std::cout << "OK." << std::endl;
+    } else {
+        std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
+    }
     return 0;
 }
 
