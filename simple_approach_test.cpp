@@ -1330,38 +1330,6 @@ int main(int argc, char* argv[]) {
     //timingFile << num_threads << "," << seq_time << "," << par_time << "," << mutex_time << "," << nomutex_time << "\n";
     //timingFile.close();
 
-    /*bool same_results = true;
-
-    if (sequential_result.size() != parallel_result.size()) {
-        same_results = false;
-    } 
-    
-    else {
-        for (size_t i=0; i < sequential_result.size(); ++i) {
-            double dx = std::abs(sequential_result[i].x - parallel_result[i].x);
-            double dy = std::abs(sequential_result[i].y - parallel_result[i].y);
-            double dvx = std::abs(sequential_result[i].vx - parallel_result[i].vx);
-            double dvy = std::abs(sequential_result[i].vy - parallel_result[i].vy);
-            std::cout << "dx sequential" << dx << "\n";
-            std::cout << "dy seq " << dy << "\n";
-            std::cout << "dvx seq" << dvx << "\n";
-            std::cout << "dvy seq" << dvy << "\n";
-
-            //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-            if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
-                same_results = false;
-                break;
-            }
-        }
-    }
-
-    if (same_results) {
-        std::cout << "OK." << std::endl;
-    } else {
-        std::cout << "Parallel and sequential simulations grant different results" << std::endl;
-    }
-    */
-
 
     // Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
     auto compareResults = [](const std::vector<Body>& a, const std::vector<Body>& b) {
@@ -1413,7 +1381,7 @@ int main(int argc, char* argv[]) {
     double acc_nomutex = computeAccuracyOverTime(trace_seq, trace_nomutex);
     double acc_barneshutt = computeAccuracyOverTime(trace_seq, trace_barneshutt);
 
-    // Output to CSV
+
     std::ofstream out("accuracy_results.csv", std::ios::app);
     out << num_bodies << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
     out.close();
@@ -1430,60 +1398,6 @@ int main(int argc, char* argv[]) {
     //accuracyFile << initial_bodies.size() << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
     //accuracyFile.close();
 
-    ////// Compare results of sequential and barnes hutt
-
-    /*same_results = true;
-
-    if (sequential_result.size() != barneshutt_result.size()) {
-        same_results = false;
-    } 
     
-    else {
-        for (size_t i=0; i < sequential_result.size(); ++i) {
-            double dx = std::abs(sequential_result[i].x - barneshutt_result[i].x);
-            double dy = std::abs(sequential_result[i].y - barneshutt_result[i].y);
-            double dvx = std::abs(sequential_result[i].vx - barneshutt_result[i].vx);
-            double dvy = std::abs(sequential_result[i].vy - barneshutt_result[i].vy);
-            std::cout << "dx sequential" << dx << "\n";
-            std::cout << "dy seq " << dy << "\n";
-            std::cout << "dvx seq" << dvx << "\n";
-            std::cout << "dvy seq" << dvy << "\n";
-
-            if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-                same_results = false;
-                break;
-            }
-        }
-    }
-
-    if (same_results) {
-        std::cout << "OK." << std::endl;
-    } else {
-        std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
-    }
-    return 0;*/
 }
 
-/*
-When compiling:  make ./simple_approach_test
-When running: ./simple_approach_test
-
-Run the Python file in venv environment:
-python make_frames.py
-
-Back in terminal:
-magick convert -delay 20 -loop 0 frames1/frame_*.png simulation1.gif
-
-
-1) When we only had runSequential
-Sequential simulation completed in 7 ms
-
-2) When we added parallelization
-Sequential simulation completed in 7 ms
-Parallel simulation completed in 13 ms
-
-3) When we avoided computing Fij twice
-Sequential simulation completed in 9 ms
-Parallel simulation completed in 7 ms
-
-*/
