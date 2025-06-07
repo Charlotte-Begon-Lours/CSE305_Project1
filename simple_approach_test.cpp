@@ -10,6 +10,8 @@
 #include <sstream>
 #include <iomanip>
 #include <fstream>
+#include <complex>
+#include <random>
 
 ////////////////////////////////////////////////////////////////////////////////////////
 //////////////// DEFINING CONSTANTS AND USEFUL FUNCTIONS  //////////////////////////////
@@ -18,7 +20,7 @@
 // Constants for all code
 #define G 6.67430e-11 // Gravity constant
 #define NOT_ZERO 1e-9 // constant to avoid division by zero
-#define THETA 0.1 // Barnes hut approximation parameter
+#define THETA_FMM 0.1 // Barnes hut approximation parameter
 
 // constants for the FMM method :
 #define P 20 // number of multipole/local expansion terms
@@ -520,7 +522,7 @@ public:
         double distance = abs(r);
         double source_size = source->bbox.size();
 
-        if (source != target && source_size / distance < THETA) {
+        if (source != target && source_size / distance < THETA_FMM) {
             // Use multipole approximation
             applyMultipoleForce(source, target);
         } else if (source->is_leaf && target->is_leaf) {
@@ -736,7 +738,7 @@ public:
         double distance = abs(r);
         double source_size = source->bbox.size();
 
-        if (source != target && source_size / distance < THETA) {
+        if (source != target && source_size / distance < THETA_FMM) {
             // use the multipole approximation
             applyMultipoleForce(source, target);
         } else if (source->is_leaf && target->is_leaf) {
