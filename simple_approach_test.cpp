@@ -1701,17 +1701,6 @@ void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
         {1.02413e26,   4498396441000.0,     "Neptune"}
     };
 
-    /*for (const auto& p : planets) {
-        double x = p.distance;
-        double y = 0.0;
-
-        // Orbital speed: circular orbit approximation
-        double v = std::sqrt(G * 1.9885e30 / p.distance); 
-        double vx = 0.0;
-        double vy = v;
-
-        sim.newBody(Body(p.mass, x, y, vx, vy));
-    }*/
     for (const auto& p : planets) {
         double R = p.distance;
 
@@ -1730,32 +1719,6 @@ void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
     }
 
 }
-
-
-double computeAccuracy(const std::vector<Body>& reference, const std::vector<Body>& test) {
-        if (reference.size() != test.size()) return 0.0;
-
-        double total_diff = 0.0;
-        double total_ref = 0.0;
-
-        for (size_t i = 0; i < reference.size(); ++i) {
-            double dx = reference[i].x - test[i].x;
-            double dy = reference[i].y - test[i].y;
-            double dvx = reference[i].vx - test[i].vx;
-            double dvy = reference[i].vy - test[i].vy;
-
-            double diff = std::sqrt(dx * dx + dy * dy + dvx * dvx + dvy * dvy);
-            double ref_magnitude = std::sqrt(reference[i].x * reference[i].x + reference[i].y * reference[i].y +
-                                            reference[i].vx * reference[i].vx + reference[i].vy * reference[i].vy);
-
-            total_diff += diff;
-            total_ref += ref_magnitude;
-        }
-
-        if (total_ref == 0.0) return 100.0;
-        double accuracy = 100.0 * (1.0 - (total_diff / total_ref));
-        return std::max(0.0, accuracy); // clamp to [0, 100]
-    }
 
 double computeAccuracyOverTime(const std::vector<std::vector<Body>>& reference_steps,
                                const std::vector<std::vector<Body>>& test_steps) {
@@ -1808,80 +1771,135 @@ double computeAccuracyOverTime(const std::vector<std::vector<Body>>& reference_s
 ////////////////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, char* argv[]) {
+    // Uncomment for benchmark_pipeline.py:
     /*std::ofstream timingFile("timing_results.csv", std::ios::app);
     if (!timingFile.is_open()) {
         std::cerr << "Could not open timing_results.csv" << std::endl;
         return 1;
-    }
+    }*/
 
+    // Uncomment for accuracy_pipeline.py:
     std::ofstream accuracyFile("accuracy_results.csv", std::ios::app);
     if (!accuracyFile.is_open()) {
         std::cerr << "Could not open accuracy_results.csv" << std::endl;
         return 1;
-    }*/
+    }
 
-    int num_threads = 6; // default
+    int num_threads = 6; // default after checking the optimal thread number from the graphs
+    // Uncomment for benchmark_pipeline.py:
     /*if (argc > 1) {
         num_threads = std::stoi(argv[1]);
     }*/
+
     int num_bodies = 50;
+    // Uncomment for accuracy_pipeline.py:
     if (argc > 1) {
         num_bodies = std::stoi(argv[1]);
     }
 
-    // simulation with time step and total time
-    NBodySimulation simulation_sequential(1, 50); // 1 second time step, 20 total
+
+    //////////////////// Sequential simulation ///////////////////////////
+
+
+    // For Random System:
+    NBodySimulation simulation_sequential(1, 50); // 1 second time step, 50 total
+    // Uncomment for Solar System:
     //NBodySimulation simulation_sequential(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
 
-    // system of bodies for simulation
+    // For Random System:
     createRandomSystem(simulation_sequential, num_bodies); 
-    //createSolarSystem(simulation_sequential, 0.0);
+    // Uncomment for Solar System:
     // createSolarSystem(simulation_sequential, M_PI/4.0); // centered solar system with planets circlinng the sun (45 degree angle)
 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
-    //std::cout << "TOTAL NUMBER OF BODIES" << initial_bodies.size() << "\n";
     
-    // Run sequential simulation
+    // Uncomment for benchmark_pipeline.py:
     //long seq_time = simulation_sequential.runSequential();
+
+    // Uncomment for accuracy_pipeline.py:
     std::vector<std::vector<Body>> trace_seq = simulation_sequential.runSequentialWithTrace();
+
     std::vector<Body> sequential_result = simulation_sequential.getBodies();
 
+
+    //////////////////// Parallel simulation ///////////////////////////
+
+    // For Random System:
     NBodySimulation simulation_parallel(1, 50);
+    // Uncomment for Solar System:
     //NBodySimulation simulation_parallel(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
     simulation_parallel.setBodies(initial_bodies);
+
+    // Uncomment for benchmark_pipeline.py:
     //long par_time = simulation_parallel.runParallel(1.0, num_threads);
+    // Uncomment for accuracy_pipeline.py:
     std::vector<std::vector<Body>> trace_par = simulation_parallel.runParallelWithTrace(1.0, num_threads);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
 
+
+    //////////////////// Parallel Mutex simulation ///////////////////////
+
+    // For Random System:
     NBodySimulation simulation_parallel_mutex(1, 50);
+    // Uncomment for Solar System:
     //NBodySimulation simulation_parallel_mutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
     simulation_parallel_mutex.setBodies(initial_bodies);
+
+    // Uncomment for benchmark_pipeline.py:
     //long mutex_time = simulation_parallel_mutex.runParallelWithMutex(1.0, num_threads);
+    // Uncomment for accuracy_pipeline.py:
     std::vector<std::vector<Body>> trace_mutex = simulation_parallel_mutex.runParallelWithMutexWithTrace(1.0, num_threads);
     std::vector<Body> mutex_result = simulation_parallel_mutex.getBodies();
 
 
+    //////////////////// Parallel No Mutex simulation ////////////////////
+
+    // For Random System:
     NBodySimulation simulation_parallel_nomutex(1, 50);
+    // Uncomment for Solar System:
     //NBodySimulation simulation_parallel_nomutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
     simulation_parallel_nomutex.setBodies(initial_bodies);
+
+    // Uncomment for benchmark_pipeline.py:
     //long nomutex_time = simulation_parallel_nomutex.runParallelNoMutex(1.0, num_threads);
+    // Uncomment for accuracy_pipeline.py:
     std::vector<std::vector<Body>> trace_nomutex = simulation_parallel_nomutex.runParallelNoMutexWithTrace(1.0, num_threads);
     std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
 
-    //NBodySimulation for Barnes Hutt 
+
+    //////////////////// Barnes-Hut simulation ///////////////////////////
+ 
+    // For Random System:
     NBodySimulation simulation_barneshutt(1, 50);
+    // Uncomment for Solar System:
     //NBodySimulation simulation_barneshutt(3600 * 24, 3600 * 24 * 365);
     simulation_barneshutt.setBodies(initial_bodies);
+    
     double domainSize = 1e13;// should be large enough to include all bodies
-    //simulation_barneshutt.runBarnesHutt(domainSize, 1.0); // timestep = 1.0
+
+    // Uncomment for benchmark_pipeline.py:
+    // long barneshut_time = simulation_barneshutt.runBarnesHutt(domainSize, 1.0); // timestep = 1.0
+    // Uncomment for accuracy_pipeline.py:
     std::vector<std::vector<Body>> trace_barneshutt = simulation_barneshutt.runBarnesHuttWithTrace(domainSize, 1.0);
     std::vector<Body> barneshutt_result = simulation_barneshutt.getBodies();
 
+    // Uncomment for benchmark_pipeline.py:
     //timingFile << num_threads << "," << seq_time << "," << par_time << "," << mutex_time << "," << nomutex_time << "\n";
     //timingFile.close();
 
+    // Uncomment for accuracy_pipeline.py:
+    double acc_parallel = computeAccuracyOverTime(trace_seq, trace_par);
+    double acc_mutex = computeAccuracyOverTime(trace_seq, trace_mutex);
+    double acc_nomutex = computeAccuracyOverTime(trace_seq, trace_nomutex);
+    double acc_barneshutt = computeAccuracyOverTime(trace_seq, trace_barneshutt);
 
+
+    accuracyFile << initial_bodies.size() << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
+    accuracyFile.close();
+
+    ////////////////////////// Results //////////////////////////////////
+    
     // Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
     auto compareResults = [](const std::vector<Body>& a, const std::vector<Body>& b) {
         if (a.size() != b.size()) return false;
@@ -1898,7 +1916,6 @@ int main(int argc, char* argv[]) {
 
 
             if (dx > 1e-1 || dy > 1e-1 || dvx > 1e-1 || dvy > 1e-1) {
-            //if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
                 return false;
             }
         }
@@ -1924,31 +1941,8 @@ int main(int argc, char* argv[]) {
     } else {
         std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
     }
-    
-    
-
-    double acc_parallel = computeAccuracyOverTime(trace_seq, trace_par);
-    double acc_mutex = computeAccuracyOverTime(trace_seq, trace_mutex);
-    double acc_nomutex = computeAccuracyOverTime(trace_seq, trace_nomutex);
-    double acc_barneshutt = computeAccuracyOverTime(trace_seq, trace_barneshutt);
-
-
-    std::ofstream out("accuracy_results.csv", std::ios::app);
-    out << num_bodies << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
-    out.close();
-
-    /*std::ofstream accFile("accuracy_results.csv", std::ios::app);
-    if (accFile.is_open()) {
-        accFile << initial_bodies.size() << "," 
-                << acc_parallel << "," 
-                << acc_mutex << "," 
-                << acc_nomutex << "," 
-                << acc_barneshutt << "\n";
-        accFile.close();
-    }*/
-    //accuracyFile << initial_bodies.size() << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
-    //accuracyFile.close();
 
     
 }
+
 
