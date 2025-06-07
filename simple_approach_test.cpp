@@ -19,18 +19,18 @@
 #define NOT_ZERO 1e-9 // constant to avoid division by zero
 
 // Constants for Barnes-Hutt Algorithm
-const int MAX_BODIES = 1000; 
+const int MAX_BODIES = 10000; 
 const int MAX_NODES = 10 * MAX_BODIES;
-const double THETA = 0.5; // Barnes-Hut threshold
+const double THETA = 0.9; // Barnes-Hut threshold
 const double SOFTENING = 1e-3; // suggested as an improvement by chatgpt, avoid infinity when two bodies get very close to each other
-const double MIN_SUBDIVIDE = 1e3; // this can be adapted to the system we study (should be smaller than the expected distances between bodies, 100 seems adapted for the solar system)
+const double MIN_SUBDIVIDE = 1e-1; // this can be adapted to the system we study (should be smaller than the expected distances between bodies, 100 seems adapted for the solar system)
 
 double sqr(double x) {
     return x*x;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////
-//////////// DEFINING BODY CLASS TO BE ABLE TO MANIPULATE THEM BETTER //////////////////
+//////////// DEFINING BODY CLASS TO MANIPULATE THE OBJECT BODIES ///////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
 class Body {
 public:
@@ -47,9 +47,7 @@ public:
         double dy = other.y - y;
         double dist = std::sqrt(sqr(dx) + sqr(dy));
         
-        // To avoid division by zero
-
-        dist = std::max(dist, NOT_ZERO);
+        dist = std::max(dist, NOT_ZERO); // avoid division by zero
 
         // Newton's law:
         double force = G * mass * other.mass / sqr(dist);
@@ -60,13 +58,11 @@ public:
     }
 
     void OptimizedForce(Body& other) {
-        // Directly computes Fij and Fji
+        // directly computes Fij and Fji
         double dx = other.x - x;
         double dy = other.y - y;
         double dist = std::sqrt(sqr(dx) + sqr(dy));
         
-        // To avoid division by zero
-        //double not_zero = NOT_ZERO;
         dist = std::max(dist, NOT_ZERO);
 
         // Newton's law:
@@ -108,7 +104,7 @@ struct QuadNode {
     int children[4] = {-1, -1, -1, -1};
     int bodyIndex = -1;
 
-    double centerX, centerY; // Center or the region the node is in
+    double centerX, centerY; // center or the region the node is in
     double halfSize; // half of a side of the square it is in
     double mass = 0.0; // total mass of the region
     double comX = 0.0; // center of mass of the region
@@ -141,7 +137,7 @@ public:
         return id;
     }
 
-    // Determine which quadrant a body b belongs to (value between 0 and 3)
+    // determine which quadrant a body b belongs to (value between 0 and 3)
     int getQuadrant(const QuadNode& node, const Body& b) {
         int quad = 0;
         if (b.x > node.centerX) quad += 1;
@@ -275,11 +271,11 @@ public:
 
 class NBodySimulation {
 private:
-    std::vector<Body> bodies;
-    double timeStep;
-    double totalTime;
-    double currentTime;
-    int numSteps;
+    std::vector<Body> bodies; // store all bodies
+    double timeStep; 
+    double totalTime; // total simulation time
+    double currentTime; 
+    int numSteps; 
 
 public:
 
@@ -296,16 +292,16 @@ public:
         numSteps = static_cast<int>(totalTime / timeStep);
     }
 
-    void newBody(const Body& body) {
+    void newBody(const Body& body) { // add to bodies
         bodies.push_back(body);
     }
 
-    // Simple approach
-    void runSequential() {
-        std::ofstream file("positions_sequential.csv");
+    // Simple sequential approach without any form of parallelization
+    long runSequential() {
+        std::ofstream file("positions_sequential.csv"); // store the bodies' positions at each timestep for plotting
         if (!file.is_open()) {
             std::cerr << "Failed to open the file." << std::endl;
-            return;
+            return 0;
         }
 
         for (size_t i = 0; i < bodies.size(); ++i) {
@@ -316,7 +312,7 @@ public:
 
         auto startTime = std::chrono::high_resolution_clock::now();
         
-        // Main loop
+        // main loop
         for (int step = 1; step <= numSteps; ++step) {
             
             // reset the forces
@@ -345,7 +341,7 @@ public:
             for (auto& body : bodies) {
                 body.updateVelocity(timeStep);
                 body.updatePosition(timeStep);
-                std::cout << "Body position: (" << body.x << ", " << body.y << ")" << std::endl;
+                //std::cout << "Body position: (" << body.x << ", " << body.y << ")" << std::endl;
                 file << body.x << ',' << body.y << ',';
             }
             file << "\n";
@@ -360,6 +356,7 @@ public:
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
         
         std::cout << "Sequential simulation completed in " << duration << " ms" << std::endl;
+        return duration;
     }
 
     void updatePositionThread(std::vector<Body>::iterator begin, std::vector<Body>::iterator end, double dt) { 
@@ -372,14 +369,13 @@ public:
         }
 
 }
-    void runParallel(double dt, size_t Nthreads) {
-        // Start timer
+    long runParallel(double dt, size_t Nthreads) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
         size_t length = bodies.size();
 
         if (length == 0){
-            return;
+            return 0;
         } 
         if (Nthreads == 0) {
             Nthreads = 1;
@@ -400,7 +396,7 @@ public:
                 }
             }
 
-            // Update position and velocity in parallel
+            // update position and velocity in parallel
             std::vector<std::thread> threads(Nthreads - 1);
             std::vector<Body>::iterator block_start = bodies.begin();
 
@@ -414,7 +410,6 @@ public:
 
             updatePositionThread(block_start, bodies.end(), dt);
 
-            //  Join Threads
             for (size_t i = 0; i < threads.size(); ++i) {
                 threads[i].join();
             }
@@ -422,21 +417,21 @@ public:
             currentTime += dt;
         }
 
-        // End timer
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
         
         std::cout << "Parallel simulation completed in " << duration << " ms" << std::endl;
+        return duration;
     }
 
-    void runParallelWithMutex(double dt, size_t Nthreads) {
+    long runParallelWithMutex(double dt, size_t Nthreads) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
         size_t length = bodies.size();
-        if (length == 0 || Nthreads == 0) return; // no bodies or threads
+        if (length == 0 || Nthreads == 0) return 0; // no bodies or threads
         if (Nthreads > length) Nthreads = length;
 
-        std::vector<std::mutex> force_mutexes(length);
+        std::vector<std::mutex> force_mutexes(length); // mutex for each body to not have issues with the computation of its forces
 
         for (int step = 0; step < numSteps; ++step) {
             for (size_t i = 0; i < bodies.size(); ++i) {
@@ -444,11 +439,12 @@ public:
                 bodies[i].fy = 0.0;
             }
 
+            // compute forces in parallel
             std::vector<std::thread> threads;
             auto computeForces = [&](size_t start, size_t end) {
                 for (size_t i = start; i < end; ++i) {
                     for (size_t j = 0; j < bodies.size(); ++j) {
-                        if (i == j) continue;
+                        if (i == j) continue; // do not compute force with itself
                         double dx = bodies[j].x - bodies[i].x;
                         double dy = bodies[j].y - bodies[i].y;
                         double dist = std::sqrt(sqr(dx) + sqr(dy));
@@ -457,7 +453,7 @@ public:
                         double fx = force * dx / dist;
                         double fy = force * dy / dist;
 
-                        std::lock_guard<std::mutex> lock(force_mutexes[i]);
+                        std::lock_guard<std::mutex> lock(force_mutexes[i]); // update with mutex to protect forces
                         bodies[i].fx += fx;
                         bodies[i].fy += fy;
                     }
@@ -467,7 +463,12 @@ public:
             size_t block_size = length / Nthreads;
             for (size_t t = 0; t < Nthreads; ++t) {
                 size_t start = t * block_size;
-                size_t end = (t == Nthreads - 1) ? length : start + block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
                 threads.emplace_back(computeForces, start, end);
             }
 
@@ -483,7 +484,12 @@ public:
 
             for (size_t t = 0; t < Nthreads; ++t) {
                 size_t start = t * block_size;
-                size_t end = (t == Nthreads - 1) ? length : start + block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
                 updateThreads.emplace_back(updateFunc, start, end);
             }
 
@@ -495,17 +501,18 @@ public:
         }
 
         auto endTime = std::chrono::high_resolution_clock::now();
-        std::cout << "Parallel simulation with mutex completed in "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count()
-                  << " ms" << std::endl;
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Parallel simulation with mutex completed in " << duration << " ms" << std::endl;
+        return duration;
     }
 
 
-    void runParallelNoMutex(double dt, size_t Nthreads) {
+    long runParallelNoMutex(double dt, size_t Nthreads) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
         size_t length = bodies.size();
-        if (length == 0 || Nthreads == 0) return;
+        if (length == 0 || Nthreads == 0) return 0;
         if (Nthreads > length) Nthreads = length;
 
         for (int step = 0; step < numSteps; ++step) {
@@ -532,7 +539,12 @@ public:
             size_t block_size = length / Nthreads;
             for (size_t t = 0; t < Nthreads; ++t) {
                 size_t start = t * block_size;
-                size_t end = (t == Nthreads - 1) ? length : start + block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
                 threads.emplace_back(computeForces, t, start, end);
             }
 
@@ -540,7 +552,7 @@ public:
                 threads[i].join();
             }
 
-            // Reduce forces
+            // reduce forces
             for (size_t i = 0; i < length; ++i) {
                 bodies[i].fx = bodies[i].fy = 0.0;
                 for (size_t t = 0; t < Nthreads; ++t) {
@@ -549,7 +561,7 @@ public:
                 }
             }
 
-            // Update positions and velocities
+            // update positions and velocities
             threads.clear();
             auto updateFunc = [&](size_t start, size_t end) {
                 updatePositionThread(bodies.begin() + start, bodies.begin() + end, dt);
@@ -557,7 +569,12 @@ public:
 
             for (size_t t = 0; t < Nthreads; ++t) {
                 size_t start = t * block_size;
-                size_t end = (t == Nthreads - 1) ? length : start + block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
                 threads.emplace_back(updateFunc, start, end);
             }
 
@@ -569,13 +586,16 @@ public:
         }
 
         auto endTime = std::chrono::high_resolution_clock::now();
-        std::cout << "Parallel simulation without mutex completed in "
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count()
-                  << " ms" << std::endl;
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Parallel simulation without mutex completed in " << duration << " ms" << std::endl;
+        return duration;
     }
 
-    void runBarnesHutt(double domainSize, double dt) {
+    long runBarnesHutt(double domainSize, double dt) {
         Quadtree tree;
+
+        auto startTime = std::chrono::high_resolution_clock::now();
 
         for (int step = 0; step < numSteps; ++step) {
             tree.reset();
@@ -591,24 +611,296 @@ public:
             }
             tree.update_pos_vel(bodies, dt);
         }
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Barnes Hutt simulation completed in " << duration << " ms" << std::endl;
+        return duration;
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////// FOR ACCURACY- we need a history of each timestep //////////////
+    ////////////////////////////////////////////////////////////////////////////////////////
+    std::vector<std::vector<Body>> runSequentialWithTrace() {
+        std::vector<std::vector<Body>> history;
+
+        auto startTime = std::chrono::high_resolution_clock::now();
+        
+        // main loop
+        for (int step = 1; step <= numSteps; ++step) {
+            
+            // reset the forces
+            for (auto& body : bodies) {
+                body.fx = 0.0;
+                body.fy = 0.0;
+            }
+            
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                for (size_t j = i + 1; j < bodies.size(); ++j) {
+                    bodies[i].OptimizedForce(bodies[j]);
+                }
+            }
+
+            
+            // update velocities and positions
+            for (auto& body : bodies) {
+                body.updateVelocity(timeStep);
+                body.updatePosition(timeStep);
+                //std::cout << "Body position: (" << body.x << ", " << body.y << ")" << std::endl;
+            }
+
+            history.push_back(bodies);
+
+            // update current time
+            currentTime += timeStep;
+        
+        }
+
+
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Sequential simulation completed in " << duration << " ms" << std::endl;
+        return history;
+    }
+
+    
+    std::vector<std::vector<Body>> runParallelWithTrace(double dt, size_t Nthreads) {
+        std::vector<std::vector<Body>> history;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        
+        size_t length = bodies.size();
+        if (length == 0) return history;
+        if (Nthreads == 0) Nthreads = 1;
+
+        for (int step = 1; step <= numSteps; ++step) {
+            for (auto& b : bodies) b.fx = b.fy = 0.0;
+
+            for (size_t i = 0; i < bodies.size(); ++i) {
+                for (size_t j = i+1; j < bodies.size(); ++j) {
+                    bodies[i].OptimizedForce(bodies[j]);
+                }
+            }
+
+            std::vector<std::thread> threads(Nthreads - 1);
+            auto block_start = bodies.begin();
+            size_t block_size = length / Nthreads;
+
+            for (size_t i = 0; i < Nthreads - 1; ++i) {
+                auto block_end = block_start + block_size;
+                threads[i] = std::thread(&NBodySimulation::updatePositionThread, this, block_start, block_end, dt);
+                block_start = block_end;
+            }
+            updatePositionThread(block_start, bodies.end(), dt);
+            for (auto& t : threads) t.join();
+
+            history.push_back(bodies);
+            currentTime += dt;
+        }
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Parallel simulation completed in " << duration << " ms" << std::endl;
+        return history;
+    }
+
+    std::vector<std::vector<Body>> runParallelWithMutexWithTrace(double dt, size_t Nthreads) {
+        std::vector<std::vector<Body>> history;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        size_t length = bodies.size();
+        if (length == 0 || Nthreads == 0) return history;
+        if (Nthreads > length) Nthreads = length;
+
+        std::vector<std::mutex> force_mutexes(length);
+
+        for (int step = 0; step < numSteps; ++step) {
+            for (auto& b : bodies) b.fx = b.fy = 0.0;
+
+            std::vector<std::thread> threads;
+            auto computeForces = [&](size_t start, size_t end) {
+                for (size_t i = start; i < end; ++i) {
+                    for (size_t j = 0; j < bodies.size(); ++j) {
+                        if (i == j) continue;
+                        double dx = bodies[j].x - bodies[i].x;
+                        double dy = bodies[j].y - bodies[i].y;
+                        double dist = std::sqrt(sqr(dx) + sqr(dy));
+                        dist = std::max(dist, NOT_ZERO);
+                        double force = G * bodies[i].mass * bodies[j].mass / sqr(dist);
+                        double fx = force * dx / dist;
+                        double fy = force * dy / dist;
+
+                        std::lock_guard<std::mutex> lock(force_mutexes[i]);
+                        bodies[i].fx += fx;
+                        bodies[i].fy += fy;
+                    }
+                }
+            };
+
+            size_t block_size = length / Nthreads;
+            for (size_t t = 0; t < Nthreads; ++t) {
+                size_t start = t * block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
+                threads.emplace_back(computeForces, start, end);
+            }
+            for (auto& t : threads) t.join();
+
+            threads.clear();
+            auto updateFunc = [&](size_t start, size_t end) {
+                updatePositionThread(bodies.begin() + start, bodies.begin() + end, dt);
+            };
+
+            for (size_t t = 0; t < Nthreads; ++t) {
+                size_t start = t * block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
+                threads.emplace_back(updateFunc, start, end);
+            }
+            for (auto& t : threads) t.join();
+
+            history.push_back(bodies);
+            currentTime += dt;
+        }
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Parallel simulation with mutex completed in " << duration << " ms" << std::endl;
+        return history;
+    }
+
+    std::vector<std::vector<Body>> runParallelNoMutexWithTrace(double dt, size_t Nthreads) {
+        std::vector<std::vector<Body>> history;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        size_t length = bodies.size();
+        if (length == 0 || Nthreads == 0) return history;
+        if (Nthreads > length) Nthreads = length;
+
+        for (int step = 0; step < numSteps; ++step) {
+            std::vector<std::vector<std::pair<double, double>>> force_acc(length, std::vector<std::pair<double, double>>(Nthreads, {0.0, 0.0}));
+            std::vector<std::thread> threads;
+
+            auto computeForces = [&](size_t tid, size_t start, size_t end) {
+                for (size_t i = start; i < end; ++i) {
+                    for (size_t j = 0; j < length; ++j) {
+                        if (i == j) continue;
+                        double dx = bodies[j].x - bodies[i].x;
+                        double dy = bodies[j].y - bodies[i].y;
+                        double dist = std::sqrt(sqr(dx) + sqr(dy));
+                        dist = std::max(dist, NOT_ZERO);
+                        double force = G * bodies[i].mass * bodies[j].mass / sqr(dist);
+                        double fx = force * dx / dist;
+                        double fy = force * dy / dist;
+                        force_acc[i][tid].first += fx;
+                        force_acc[i][tid].second += fy;
+                    }
+                }
+            };
+
+            size_t block_size = length / Nthreads;
+            for (size_t t = 0; t < Nthreads; ++t) {
+                size_t start = t * block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
+                threads.emplace_back(computeForces, t, start, end);
+            }
+            for (auto& t : threads) t.join();
+
+            for (size_t i = 0; i < length; ++i) {
+                bodies[i].fx = bodies[i].fy = 0.0;
+                for (size_t t = 0; t < Nthreads; ++t) {
+                    bodies[i].fx += force_acc[i][t].first;
+                    bodies[i].fy += force_acc[i][t].second;
+                }
+            }
+
+            threads.clear();
+            auto updateFunc = [&](size_t start, size_t end) {
+                updatePositionThread(bodies.begin() + start, bodies.begin() + end, dt);
+            };
+
+            for (size_t t = 0; t < Nthreads; ++t) {
+                size_t start = t * block_size;
+                size_t end;
+                if (t == Nthreads - 1) {
+                    end = length;
+                } else {
+                    end = start + block_size;
+                }
+                threads.emplace_back(updateFunc, start, end);
+            }
+            for (auto& t : threads) t.join();
+
+            history.push_back(bodies);
+            currentTime += dt;
+        }
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Parallel simulation without mutex completed in " << duration << " ms" << std::endl;
+        return history;
+    }
+
+    std::vector<std::vector<Body>> runBarnesHuttWithTrace(double domainSize, double dt) {
+        std::vector<std::vector<Body>> history;
+        auto startTime = std::chrono::high_resolution_clock::now();
+        Quadtree tree;
+
+        for (int step = 0; step < numSteps; ++step) {
+            tree.reset();
+            int root = tree.createNode(0.0, 0.0, domainSize / 2.0);
+
+            for (int i = 0; i < bodies.size(); ++i) {
+                tree.insert(root, i, bodies);
+            }
+
+            for (Body& b : bodies) {
+                b.fx = b.fy = 0.0;
+                tree.computeForce(root, b, bodies);
+            }
+
+            tree.update_pos_vel(bodies, dt);
+            history.push_back(bodies);
+        }
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+        
+        std::cout << "Barnes Hutt simulation completed in " << duration << " ms" << std::endl;
+        return history;
+    }
+
+
 };
 
-//////////////// to test
+////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////// SIMULATIONS TO TEST///////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
 void createRandomSystem(NBodySimulation& sim, int numBodies) {
-    // Central massive body (like a star) 
+    srand(static_cast<unsigned int>(time(nullptr)));
+    // central massive body (like a star) 
     sim.newBody(Body(1.0e30, 0.0, 0.0, 0.0, 0.0)); 
     
-    // Add random bodies
+    // add random bodies
     for (int i = 1; i < numBodies; ++i) {
-        double angle = (rand() % 1000) * 2.0 * M_PI / 1000.0;
+        double angle = (rand() % 1000) * 2.0 * M_PI / 1000;
         double distance = 1.0e11 + (rand() % 1000) * 1.0e9;
         double mass = 1.0e23 + (rand() % 1000) * 1.0e22;
         
         double x = distance * cos(angle);
         double y = distance * sin(angle);
         
-        // Calculate circular orbit velocity
+        // calculate circular orbit velocity
         double v = std::sqrt(G * 1.0e30 / distance)*10000000;
         double vx = -v * sin(angle);
         double vy = v * cos(angle);
@@ -621,11 +913,10 @@ void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
     // SUN
     sim.newBody(Body(1.9885e30, 0.0, 0.0, 0.0, 0.0)); // Sun
 
-    // Format: {mass [kg], distance from Sun [m], orbital velocity [m/s]}
     struct Planet {
-        double mass;
-        double distance;
-        const char* name; // optional, not used here
+        double mass; // in kg
+        double distance; // in meters
+        const char* name; 
     };
     // sources for the orbital radius values (in meters): source: NASA, JPL, and Wikipedia
     // https://nssdc.gsfc.nasa.gov/planetary/factsheet/
@@ -655,14 +946,14 @@ void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
     for (const auto& p : planets) {
         double R = p.distance;
 
-        // Position: rotated by angle_offset
+        // position rotated by angle_offset
         double x = R * std::cos(angle_offset_radians);
         double y = R * std::sin(angle_offset_radians);
 
-        // Orbital speed
+        // orbital speed
         double v = std::sqrt(G * 1.9885e30 / R);
 
-        // Velocity: perpendicular to radius vector (90° rotation)
+        // velocity that is perpendicular to radius vector so it is a 90 degree rotation
         double vx = -v * std::sin(angle_offset_radians);
         double vy =  v * std::cos(angle_offset_radians);
 
@@ -671,58 +962,157 @@ void createSolarSystem(NBodySimulation& sim, double angle_offset_radians) {
 
 }
 
-///////////////////////
 
-int main() {
-    // Set random seed
-    srand(static_cast<unsigned int>(time(nullptr)));
-    
-    // Create simulation with time step and total time
-    //NBodySimulation simulation_sequential(1, 50); // 1 second time step, 20 total
-    NBodySimulation simulation_sequential(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+double computeAccuracy(const std::vector<Body>& reference, const std::vector<Body>& test) {
+        if (reference.size() != test.size()) return 0.0;
 
-    // Create a system of bodies 
-   //createRandomSystem(simulation_sequential, 50); 
+        double total_diff = 0.0;
+        double total_ref = 0.0;
+
+        for (size_t i = 0; i < reference.size(); ++i) {
+            double dx = reference[i].x - test[i].x;
+            double dy = reference[i].y - test[i].y;
+            double dvx = reference[i].vx - test[i].vx;
+            double dvy = reference[i].vy - test[i].vy;
+
+            double diff = std::sqrt(dx * dx + dy * dy + dvx * dvx + dvy * dvy);
+            double ref_magnitude = std::sqrt(reference[i].x * reference[i].x + reference[i].y * reference[i].y +
+                                            reference[i].vx * reference[i].vx + reference[i].vy * reference[i].vy);
+
+            total_diff += diff;
+            total_ref += ref_magnitude;
+        }
+
+        if (total_ref == 0.0) return 100.0;
+        double accuracy = 100.0 * (1.0 - (total_diff / total_ref));
+        return std::max(0.0, accuracy); // clamp to [0, 100]
+    }
+
+double computeAccuracyOverTime(const std::vector<std::vector<Body>>& reference_steps,
+                               const std::vector<std::vector<Body>>& test_steps) {
+    if (reference_steps.size() != test_steps.size()) return 0.0;
+
+    size_t time_steps = reference_steps.size();
+    size_t num_bodies = reference_steps[0].size();
+
+    double total_accuracy = 0.0;
+    size_t valid_steps = 0;
+
+    for (size_t t = 0; t < time_steps; ++t) {
+        const auto& ref = reference_steps[t];
+        const auto& test = test_steps[t];
+
+        if (ref.size() != test.size()) continue;
+
+        double step_accuracy_sum = 0.0;
+        size_t valid_bodies = 0;
+
+        for (size_t i = 0; i < num_bodies; ++i) {
+            double dx = ref[i].x - test[i].x;
+            double dy = ref[i].y - test[i].y;
+            double dvx = ref[i].vx - test[i].vx;
+            double dvy = ref[i].vy - test[i].vy;
+
+            double diff = std::sqrt(dx*dx + dy*dy + dvx*dvx + dvy*dvy);
+            double ref_mag = std::sqrt(ref[i].x*ref[i].x + ref[i].y*ref[i].y +
+                                       ref[i].vx*ref[i].vx + ref[i].vy*ref[i].vy);
+
+            if (ref_mag > 0.0) {
+                double body_accuracy = 100.0 * (1.0 - diff / ref_mag);
+                step_accuracy_sum += std::max(0.0, body_accuracy);
+                ++valid_bodies;
+            }
+        }
+
+        if (valid_bodies > 0) {
+            total_accuracy += step_accuracy_sum / valid_bodies;
+            ++valid_steps;
+        }
+    }
+
+    if (valid_steps == 0) return 0.0;
+    return total_accuracy / valid_steps;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////// MAIN FUNCTION ///////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////
+
+int main(int argc, char* argv[]) {
+    /*std::ofstream timingFile("timing_results.csv", std::ios::app);
+    if (!timingFile.is_open()) {
+        std::cerr << "Could not open timing_results.csv" << std::endl;
+        return 1;
+    }
+
+    std::ofstream accuracyFile("accuracy_results.csv", std::ios::app);
+    if (!accuracyFile.is_open()) {
+        std::cerr << "Could not open accuracy_results.csv" << std::endl;
+        return 1;
+    }*/
+
+    int num_threads = 6; // default
+    /*if (argc > 1) {
+        num_threads = std::stoi(argv[1]);
+    }*/
+    int num_bodies = 50;
+    if (argc > 1) {
+        num_bodies = std::stoi(argv[1]);
+    }
+
+    // simulation with time step and total time
+    NBodySimulation simulation_sequential(1, 50); // 1 second time step, 20 total
+    //NBodySimulation simulation_sequential(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
+
+    // system of bodies for simulation
+    createRandomSystem(simulation_sequential, num_bodies); 
     //createSolarSystem(simulation_sequential, 0.0);
-    createSolarSystem(simulation_sequential, M_PI/4.0);
+    // createSolarSystem(simulation_sequential, M_PI/4.0); // centered solar system with planets circlinng the sun (45 degree angle)
 
     std::vector<Body> initial_bodies = simulation_sequential.getBodies();
-    std::cout << "TOTAL NUMBER OF BODIES" << initial_bodies.size() << "\n";
+    //std::cout << "TOTAL NUMBER OF BODIES" << initial_bodies.size() << "\n";
     
     // Run sequential simulation
-    simulation_sequential.runSequential();
+    //long seq_time = simulation_sequential.runSequential();
+    std::vector<std::vector<Body>> trace_seq = simulation_sequential.runSequentialWithTrace();
     std::vector<Body> sequential_result = simulation_sequential.getBodies();
 
-    //NBodySimulation simulation_parallel(1, 50);
-    NBodySimulation simulation_parallel(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+    NBodySimulation simulation_parallel(1, 50);
+    //NBodySimulation simulation_parallel(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
     simulation_parallel.setBodies(initial_bodies);
-    simulation_parallel.runParallel(1.0, 2);
+    //long par_time = simulation_parallel.runParallel(1.0, num_threads);
+    std::vector<std::vector<Body>> trace_par = simulation_parallel.runParallelWithTrace(1.0, num_threads);
     std::vector<Body> parallel_result = simulation_parallel.getBodies();
 
 
-    //NBodySimulation simulation_parallel_mutex(1, 50);
-    NBodySimulation simulation_parallel_mutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+    NBodySimulation simulation_parallel_mutex(1, 50);
+    //NBodySimulation simulation_parallel_mutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
     simulation_parallel_mutex.setBodies(initial_bodies);
-    simulation_parallel_mutex.runParallelWithMutex(1.0, 2);
+    //long mutex_time = simulation_parallel_mutex.runParallelWithMutex(1.0, num_threads);
+    std::vector<std::vector<Body>> trace_mutex = simulation_parallel_mutex.runParallelWithMutexWithTrace(1.0, num_threads);
     std::vector<Body> mutex_result = simulation_parallel_mutex.getBodies();
 
 
-    //NBodySimulation simulation_parallel_nomutex(1, 50);
-    NBodySimulation simulation_parallel_nomutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 2 years
+    NBodySimulation simulation_parallel_nomutex(1, 50);
+    //NBodySimulation simulation_parallel_nomutex(3600 * 24, 3600 * 24 * 365); // 1 day timestep, simulate 1Y
     simulation_parallel_nomutex.setBodies(initial_bodies);
-    simulation_parallel_nomutex.runParallelNoMutex(1.0, 2);
+    //long nomutex_time = simulation_parallel_nomutex.runParallelNoMutex(1.0, num_threads);
+    std::vector<std::vector<Body>> trace_nomutex = simulation_parallel_nomutex.runParallelNoMutexWithTrace(1.0, num_threads);
     std::vector<Body> nomutex_result = simulation_parallel_nomutex.getBodies();
 
     //NBodySimulation for Barnes Hutt 
-    NBodySimulation simulation_barneshutt(3600 * 24, 3600 * 24 * 365);
+    NBodySimulation simulation_barneshutt(1, 50);
+    //NBodySimulation simulation_barneshutt(3600 * 24, 3600 * 24 * 365);
     simulation_barneshutt.setBodies(initial_bodies);
     double domainSize = 1e13;// should be large enough to include all bodies
-    simulation_barneshutt.runBarnesHutt(domainSize, 1.0); // timestep = 1.0
+    //simulation_barneshutt.runBarnesHutt(domainSize, 1.0); // timestep = 1.0
+    std::vector<std::vector<Body>> trace_barneshutt = simulation_barneshutt.runBarnesHuttWithTrace(domainSize, 1.0);
     std::vector<Body> barneshutt_result = simulation_barneshutt.getBodies();
 
+    //timingFile << num_threads << "," << seq_time << "," << par_time << "," << mutex_time << "," << nomutex_time << "\n";
+    //timingFile.close();
 
-    //Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
-    bool same_results = true;
+    /*bool same_results = true;
 
     if (sequential_result.size() != parallel_result.size()) {
         same_results = false;
@@ -752,11 +1142,10 @@ int main() {
     } else {
         std::cout << "Parallel and sequential simulations grant different results" << std::endl;
     }
+    */
 
 
-
-    ////////////// 
-    // Compare results of parallel and mutex 
+    // Test if both simulations grant the same result (ChatGPT helped me debug the code by adding the comparison of sizes before checking values and added the 'break')
     auto compareResults = [](const std::vector<Body>& a, const std::vector<Body>& b) {
         if (a.size() != b.size()) return false;
 
@@ -765,19 +1154,24 @@ int main() {
             double dy = std::abs(a[i].y - b[i].y);
             double dvx = std::abs(a[i].vx - b[i].vx);
             double dvy = std::abs(a[i].vy - b[i].vy);
-            std::cout << "dx" << dx << "\n";
-            std::cout << "dy" << dy << "\n";
-            std::cout << "dvx" << dvx << "\n";
-            std::cout << "dvy" << dvy << "\n";
+            //std::cout << "dx" << dx << "\n";
+            //std::cout << "dy" << dy << "\n";
+            //std::cout << "dvx" << dvx << "\n";
+            //std::cout << "dvy" << dvy << "\n";
 
 
-            //if (dx > 1e-6 || dy > 1e-6 || dvx > 1e-6 || dvy > 1e-6) {
-            if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
+            if (dx > 1e-1 || dy > 1e-1 || dvx > 1e-1 || dvy > 1e-1) {
+            //if (dx > 1e9 || dy > 1e8 || dvx > 1e1 || dvy > 1e1) {
                 return false;
             }
         }
         return true;
     };
+    if (compareResults(sequential_result, parallel_result)) {
+       std::cout << "OK." << std::endl;
+    } else {
+        std::cout << "Parallel and sequential simulations grant different results" << std::endl;
+    }
     if (compareResults(sequential_result, mutex_result)) {
         std::cout << "OK." << std::endl;
     } else {
@@ -788,13 +1182,39 @@ int main() {
     } else {
         std::cout << "No mutex version and sequential simulations grant different results" << std::endl;
     }
+    if (compareResults(sequential_result, barneshutt_result)) {
+        std::cout << "OK." << std::endl;
+    } else {
+        std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
+    }
     
     
 
+    double acc_parallel = computeAccuracyOverTime(trace_seq, trace_par);
+    double acc_mutex = computeAccuracyOverTime(trace_seq, trace_mutex);
+    double acc_nomutex = computeAccuracyOverTime(trace_seq, trace_nomutex);
+    double acc_barneshutt = computeAccuracyOverTime(trace_seq, trace_barneshutt);
+
+    // Output to CSV
+    std::ofstream out("accuracy_results.csv", std::ios::app);
+    out << num_bodies << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
+    out.close();
+
+    /*std::ofstream accFile("accuracy_results.csv", std::ios::app);
+    if (accFile.is_open()) {
+        accFile << initial_bodies.size() << "," 
+                << acc_parallel << "," 
+                << acc_mutex << "," 
+                << acc_nomutex << "," 
+                << acc_barneshutt << "\n";
+        accFile.close();
+    }*/
+    //accuracyFile << initial_bodies.size() << "," << acc_parallel << "," << acc_mutex << "," << acc_nomutex << "," << acc_barneshutt << "\n";
+    //accuracyFile.close();
 
     ////// Compare results of sequential and barnes hutt
 
-    same_results = true;
+    /*same_results = true;
 
     if (sequential_result.size() != barneshutt_result.size()) {
         same_results = false;
@@ -823,7 +1243,7 @@ int main() {
     } else {
         std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
     }
-    return 0;
+    return 0;*/
 }
 
 /*
