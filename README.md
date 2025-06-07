@@ -51,25 +51,41 @@ Where:
 
 ## How to run the code
 
-When compiling: $ make ./simple_approach_test
-When running: $ ./simple_approach_test
+### When compiling:
 
-Run the Python file in venv environment to generate the pngs for the simulations:
+$ make ./simple_approach_test
+
+### When running: 
+
+$ ./simple_approach_test
+
+### Run the Python file in venv environment to generate the pngs for the simulations:
+
 (venv) $ python make_frames.py
 
-Back in terminal, an example of generating a gif from the png frames using Magick++:
+### Back in terminal, an example of generating a gif from the png frames using Magick++:
+
 $ magick convert -delay 20 -loop 0 frames1/frame_*.png simulation1.gif
 
-To run the plots of the different simulation runtimes w.r.t. the different threads:
+### To run the plots of the different simulation runtimes w.r.t. the different threads:
+
 First modify the main() in the simple_approach_test.cpp.
+
 $ make clean 
+
 $ make ./simple_approach_test
+
 (venv) $ python benchmark_pipeline.py
 
-To run the plots of the different simulation accuracies w.r.t the number of bodies:
+
+### To run the plots of the different simulation accuracies w.r.t the number of bodies:
+
 Modify the main() in the simple_approach_test.cpp.
+
 $ make clean 
+
 $ make ./simple_approach_test
+
 (venv) $ python accuracy_pipeline.py
 
 
