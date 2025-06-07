@@ -3,24 +3,40 @@
 Elisabeth Le Leslé - Fanny Scherer - Charlotte Bégon-Lours
 
 ## Introduction 
-The purpose of this project was to implement and analyse a N-body simulation system for modeling interactions between bodies in 2D space. This challenge takes major importance in physics, involving the simulation of multiple objects interacting through gravitational forces such as planets, satellites and stars. \\
-\\
-Hence, the goal of this project is to implements multiple methods and parallelization strategies for the simulation, providing valuable results for analyzing the efficiency of those methods as well and the accuracy and scalability of different algorithmic approaches across various thread configurations and problem sizes. \\
+Here's a modified version of your LaTeX content rewritten in a clear and professional **README.md** format, suitable for a GitHub or project repository:
 
-Given N bodies with initial positions, velocities, and mass, we want to simulate their gravitational interactions over time using Newton's law of motion. From the universal law of gravitation, each body experiences forces from all other bodies inversely proportional to the distance that separates them.\\
-\\
-Each body $b_{i}$ is characterized by:
-\begin{itemize}
-    \item a mass $m_{i}$
-    \item a position in 2D space $(x_{i}, y_{i})$
-    \item a velocity in 2D space $(vx_{i}, vy_{i})$
-\end{itemize}
-Two bodies $b_{i}$ and $b_{j}$ act on each other through a force given by:
-\begin{align}
-f_{i,j} = G \times \frac{m_i m_j}{(x_i - x_j)^2 + (y_i - y_j)^2}
-\end{align}
-where \( G = 6.67430 \times 10^{-11} \, m^{3} \cdot kg^{-1} \cdot s^{-2} \) is the gravitational constant.
-\\
+---
+
+# N-Body Simulation in 2D
+
+## Overview
+
+This project implements and analyzes an **N-body simulation system** for modeling interactions between bodies in 2D space. This is a fundamental problem in physics, involving the simulation of multiple objects—such as planets, satellites, and stars—interacting through gravitational forces.
+
+The goal of this project is to:
+
+* Implement multiple simulation methods.
+* Explore parallelization strategies.
+* Provide results for analyzing the **efficiency**, **accuracy**, and **scalability** of different algorithmic approaches across varying thread configurations and problem sizes.
+
+Given **N bodies** with initial positions, velocities, and masses, the objective is to simulate their **gravitational interactions over time** using **Newton's law of motion**. According to the **universal law of gravitation**, each body experiences forces from all other bodies, with force inversely proportional to the square of the distance between them.
+
+Each body `bᵢ` is defined by:
+
+* `mᵢ`: Mass
+* `(xᵢ, yᵢ)`: Position in 2D space
+* `(vxᵢ, vyᵢ)`: Velocity in 2D space
+
+Two bodies `bᵢ` and `bⱼ` exert a mutual force calculated as:
+
+```
+fᵢⱼ = G * (mᵢ * mⱼ) / ((xᵢ - xⱼ)² + (yᵢ - yⱼ)²)
+```
+
+Where:
+
+* `G = 6.67430 × 10⁻¹¹ m³·kg⁻¹·s⁻²` is the gravitational constant.
+
 
 
 ## Methods implemented
