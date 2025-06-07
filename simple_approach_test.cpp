@@ -321,6 +321,7 @@ public:
         std::complex<double> center((xmin + xmax) / 2, (ymin + ymax) / 2);
          return center;}
 
+    // add the position of the bodies
     std::complex<double> get_position(Body& body) const {
         std::complex<double> position(body.x, body.y);
         return position;}
@@ -429,7 +430,8 @@ public:
             }
         }
     }
-    void computeMultipoleParaAUX(FMMNode* node) {
+    void computeMultipoleParaAUX(FMMNode* node) { 
+        // computes the multipole expansion for a single node
         if (node->is_leaf) {
             node->multipole_coeffs[0] = 0.0;
             for (int idx : node->body_id) {
@@ -456,7 +458,7 @@ public:
         }
     }
 
-    void computeMultipoleExpansionsParallel() {
+    void computeMultipoleExpansionsParallel() { //
         std::vector<std::thread> threads;
         std::vector<FMMNode*> nodesToProcess;
 
@@ -641,7 +643,7 @@ public:
     }
     
     void buildTreeRecursive(FMMNode* node) {
-        if (node->body_id.size() <= MAX_BODIES_PER_CELL) {
+        if (node->body_id.size() <= MAX_BODIES_PER_CELL) { // not enough bodies to divides the subspace
             return; // leaf node
         }
         
@@ -671,9 +673,10 @@ public:
         computeMultipoleRecursive(root.get());
     }
     
-    void computeMultipoleRecursive(FMMNode* node) {
+    void computeMultipoleRecursive(FMMNode* node) { // upward pass 
         if (node->is_leaf) {
             // compute multipole expansion for leaf node
+            // directly calculates coefficients from the bodies they contain
             node->multipole_coeffs[0] = 0.0;
             for (int idx : node->body_id) {
                 const Body& p = bodies[idx];
@@ -704,6 +707,8 @@ public:
     }
     
     void translateMultipole(const std::vector<Complex>& source, std::vector<Complex>& target, Complex z0) {
+        // Translates multipole expansion coefficients from one center to another. 
+        // This is essential for combining child node expansions into parent nodes during the upward pass.
         target[0] += source[0];
         
         for (int k = 1; k < P; ++k) {
@@ -730,6 +735,8 @@ public:
     }
     
     void computeForcesRecursive(FMMNode* source, FMMNode* target) {
+        // source node = node whose mass/multipole expansion will influence other bodies
+        // target node = node whose bodies will have their fx and fy force components updated
         if (!source || !target || source->body_id.empty() || target->body_id.empty()) {
             return;
         }
@@ -738,7 +745,7 @@ public:
         double distance = abs(r);
         double source_size = source->bbox.size();
 
-        if (source != target && source_size / distance < THETA_FMM) {
+        if (source != target && source_size / distance < THETA_FMM) { //nodes are far apart based on the THETA criterion
             // use the multipole approximation
             applyMultipoleForce(source, target);
         } else if (source->is_leaf && target->is_leaf) {
