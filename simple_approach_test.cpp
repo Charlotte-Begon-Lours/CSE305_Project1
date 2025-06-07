@@ -1884,6 +1884,34 @@ int main(int argc, char* argv[]) {
     std::vector<std::vector<Body>> trace_barneshutt = simulation_barneshutt.runBarnesHuttWithTrace(domainSize, 1.0);
     std::vector<Body> barneshutt_result = simulation_barneshutt.getBodies();
 
+
+    //////////////////// Fast Multipole Method simulation ///////////////////////////
+    // create the box
+    double max_coord = 0;
+    for (const auto& body : initial_bodies) {
+        max_coord = std::max(max_coord, std::max(std::abs(body.x), std::abs(body.y)));
+    }
+    max_coord *= 1.2; // Add some margin
+    
+    BBox box(-max_coord, max_coord, -max_coord, max_coord);
+    
+    // run FFM simulation
+    FMMSolver solver(initial_bodies, box);
+    solver.setBodies(initial_bodies);
+    solver.simulate(timestep, total_time / timestep);
+    std::vector<Body> results_fmm = solver.getParticles();
+
+    
+    // Run parallel FMM
+    ParallelFMMSolver solverparallel(initial_bodies, box, 2); // 2 threads
+    solverparallel.setBodies(initial_bodies);
+    
+    // Run FMM simulation with same parameters
+    solverparallel.simulate(timestep, total_time / timestep);
+    std::vector<Body> results_fmm_para = solverparallel.getParticles();
+
+    
+
     // Uncomment for benchmark_pipeline.py:
     //timingFile << num_threads << "," << seq_time << "," << par_time << "," << mutex_time << "," << nomutex_time << "\n";
     //timingFile.close();
@@ -1940,6 +1968,20 @@ int main(int argc, char* argv[]) {
         std::cout << "OK." << std::endl;
     } else {
         std::cout << "Sequential and Barnes-Hutt simulations grant different results" << std::endl;
+    }
+    if (compareResults(sequential_result, results_fmm, 3, num_bodies)) {
+        std::cout << "OK." << std::endl;
+        std::cout << "\n";
+    } else {
+        std::cout << "FMM method and sequential simulations grant different results" << std::endl;
+        std::cout << "\n";
+    }
+    if (compareResults(sequential_result, results_fmm_para, 3, num_bodies)) {
+        std::cout << "OK." << std::endl;
+        std::cout << "\n";
+    } else {
+        std::cout << "Parallel FMM method and sequential simulations grant different results" << std::endl;
+        std::cout << "\n";
     }
 
     
