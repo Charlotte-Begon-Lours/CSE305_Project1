@@ -15,16 +15,18 @@
 //////////////// DEFINING CONSTANTS AND USEFUL FUNCTIONS  //////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
 
+// Constants for all code
 #define G 6.67430e-11 // Gravity constant
 #define NOT_ZERO 1e-9 // constant to avoid division by zero
 
 // Constants for Barnes-Hutt Algorithm
 const int MAX_BODIES = 10000; 
 const int MAX_NODES = 10 * MAX_BODIES;
-const double THETA = 0.9; // Barnes-Hut threshold
-const double SOFTENING = 1e-3; // suggested as an improvement by chatgpt, avoid infinity when two bodies get very close to each other
-const double MIN_SUBDIVIDE = 1e-1; // this can be adapted to the system we study (should be smaller than the expected distances between bodies, 100 seems adapted for the solar system)
+const double THETA = 0.9;                 // Barnes-Hut threshold
+const double SOFTENING = 1e-3;            // Suggested as an improvement by chatgpt, avoid infinity when two bodies get very close to each other
+const double MIN_SUBDIVIDE = 1e-1;        // This can be adapted to the system we study (should be smaller than the expected distances between bodies, 100 seems adapted for the solar system)
 
+// Square function
 double sqr(double x) {
     return x*x;
 }
@@ -32,11 +34,13 @@ double sqr(double x) {
 ////////////////////////////////////////////////////////////////////////////////////////
 //////////// DEFINING BODY CLASS TO MANIPULATE THE OBJECT BODIES ///////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
+
+// Body class to store data for each of the N bodies
 class Body {
 public:
-    double mass;     // of the body
-    double x, y;     // position coordinates
-    double vx, vy;   // velocity components
+    double mass;     // Mass of the body
+    double x, y;     // Position coordinates
+    double vx, vy;   // Velocity components
     double fx, fy;   // Force components
 
     Body(double m, double x_pos, double y_pos, double vel_x, double vel_y)
@@ -98,7 +102,7 @@ public:
 //////////// DEFINING QUADTREE STRUCTURE FOR THE BARNES-HUTT ALGORITHM ////////////////
 ////////////////////////////////////////////////////////////////////////////////////////
 
-
+// Nodes of the quadtree for the Barnes-Hut algorithm
 struct QuadNode {
     bool hasBody = false;
     int children[4] = {-1, -1, -1, -1};
@@ -111,24 +115,27 @@ struct QuadNode {
     double comY = 0.0;
 };
 
-
+// Quadtree for the Barnes-Hut algorithm
 class Quadtree {
 public:
-    Quadtree() : nodeCount(0) {}
+    Quadtree() : nodeCount(0) {} // By default the Quatree has 0 nodes
 
+    QuadNode quadtree[MAX_NODES]; // Quadtrees are implemented as arrays with a set length
+    int nodeCount; // Counter to ensure each node is in a different cell of the quadtree array
+
+    // Reset to empty tree
     void reset() { 
         nodeCount = 0; 
     }
 
-    QuadNode quadtree[MAX_NODES];
-    int nodeCount;
-
     // Create a new node
     int createNode(double cx, double cy, double hs) {
+        // Check if there is still room for an extra node in the tree array
         if (nodeCount >= MAX_NODES) {
             std::cerr << "Error: Maximum number of nodes exceeded\n";
             std::exit(1); // interrupt the program directly
         }
+        // Initialize information of the region of space to which the node belongs
         int id = nodeCount++;
         quadtree[id] = QuadNode();
         quadtree[id].centerX = cx;
@@ -137,7 +144,7 @@ public:
         return id;
     }
 
-    // determine which quadrant a body b belongs to (value between 0 and 3)
+    // Determine which quadrant a body b belongs to (value between 0 and 3)
     int getQuadrant(const QuadNode& node, const Body& b) {
         int quad = 0;
         if (b.x > node.centerX) quad += 1;
@@ -145,7 +152,7 @@ public:
         return quad;
     }
 
-    // insert a body 'b' of index 'body_index' into the tree rooted at node 'x' of index 'node_index'
+    // Insert a body 'b' of index 'body_index' into the tree rooted at node 'x' of index 'node_index'
     void insert(int node_index, int body_index, std::vector<Body>& bodies) {
         QuadNode& node_x = quadtree[node_index];
         Body& body_b = bodies[body_index];
@@ -165,7 +172,6 @@ public:
             node_x.comY = body_b.y;
             return;
         } 
-        
         else {
             // 3. If node x is an external node, say containing a body named c.   
             // Since b and c may still end up in the same quadrant, there may be several subdivisions during a single insertion. 
@@ -193,17 +199,14 @@ public:
                 int oldQuad = getQuadrant(node_x, body_c); // find the quadrant in which c was in
                 insert(node_x.children[oldQuad], body_c_index, bodies); // insert body c into a child quadrant
             }
-
             // 3. and 2. If node x is an internal node, recursively insert the body b in the appropriate quadrant.
             int quad = getQuadrant(node_x, body_b);
             insert(node_x.children[quad], body_index, bodies);
         }
-
         // Update total mass and center of mass
         double totalMass = 0.0;
         double weightedX = 0.0;
         double weightedY = 0.0;
-
         for (int i=0; i<4; ++i) {
             int childID = node_x.children[i];
             if (childID == -1) continue;
@@ -212,14 +215,12 @@ public:
             weightedX += child.comX*child.mass;
             weightedY += child.comY*child.mass;
         }
-
         node_x.mass = totalMass;
         node_x.comX = weightedX/totalMass;
         node_x.comY = weightedY/totalMass;
-
     }
 
-    // calculate the net force acting on body b
+    // Calculate the net force acting on body b sequentially
     void computeForce(int nodeID, Body& b, std::vector<Body>& bodies) {
         // Uninitialized node
         if (nodeID == -1) {
@@ -256,11 +257,28 @@ public:
         }
     }
 
-    // Integrate position and velocity using semi-implicit Euler
+    // Calculate the net force acting on body b thread version
+    void computeForceThread(std::vector<Body>::iterator begin, std::vector<Body>::iterator end, int root, std::vector<Body>& bodies) {
+        for (auto it=begin; it!=end; ++it) {
+            it->fx = 0.0;
+            it->fy = 0.0;
+            computeForce(root, *it, bodies);
+        }
+    }
+
+    // Update position and velocity of the bodies sequencially
     void update_pos_vel(std::vector<Body>& bodies, double dt) {
         for (Body& b : bodies) {
             b.updatePosition(dt);
             b.updateVelocity(dt);
+        }
+    }
+
+    // Update position and velocity of the bodies threaded version
+    void update_pos_vel_Thread(std::vector<Body>::iterator begin, std::vector<Body>::iterator end, std::vector<Body>& bodies, double dt) {
+        for (auto it=begin; it!=end; ++it) {
+            it->updatePosition(dt);
+            it->updateVelocity(dt);
         }
     }
 };
@@ -296,7 +314,9 @@ public:
         bodies.push_back(body);
     }
 
-    // Simple sequential approach without any form of parallelization
+    ////// BEGINNING OF DIFFERENT SIMULATION METHODS ///////////////////////////////////////////////////////////////////
+    
+    // Simple sequential approach without any form of parallelization ==================================================
     long runSequential() {
         std::ofstream file("positions_sequential.csv"); // store the bodies' positions at each timestep for plotting
         if (!file.is_open()) {
@@ -359,6 +379,7 @@ public:
         return duration;
     }
 
+    // First parallelization: updating the position and velocity in parallel =================================
     void updatePositionThread(std::vector<Body>::iterator begin, std::vector<Body>::iterator end, double dt) { 
         //std::ofstream file("position_parallel.csv");
         std::vector<Body>::iterator it = begin;
@@ -367,8 +388,7 @@ public:
             it->updatePosition(dt);
             ++it;
         }
-
-}
+    }
     long runParallel(double dt, size_t Nthreads) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -387,7 +407,6 @@ public:
                 bodies[i].fx = 0.0;
                 bodies[i].fy = 0.0;
             }
-        
             for (size_t i = 0; i < bodies.size(); ++i) {
                 for (size_t j = i+1; j < bodies.size(); ++j) { // originally we started at size_t j = 0
                     if (i != j) {
@@ -395,25 +414,22 @@ public:
                     }
                 }
             }
-
             // update position and velocity in parallel
             std::vector<std::thread> threads(Nthreads - 1);
             std::vector<Body>::iterator block_start = bodies.begin();
-
             size_t block_size = length / Nthreads;
-
+            // Update position and velocity in parallel
             for (size_t i = 0; i < Nthreads - 1; ++i) {
                 std::vector<Body>::iterator block_end = block_start + block_size;
                 threads[i] = std::thread(&NBodySimulation::updatePositionThread, this, block_start, block_end, dt); // chatGPT helped me figure out using "this"
                 block_start = block_end;
             }
-
+            // Last thread to update posotion and velocity
             updatePositionThread(block_start, bodies.end(), dt);
-
+            // Join threads
             for (size_t i = 0; i < threads.size(); ++i) {
                 threads[i].join();
             }
-
             currentTime += dt;
         }
 
@@ -507,7 +523,6 @@ public:
         return duration;
     }
 
-
     long runParallelNoMutex(double dt, size_t Nthreads) {
         auto startTime = std::chrono::high_resolution_clock::now();
 
@@ -592,6 +607,7 @@ public:
         return duration;
     }
 
+    // Regular Barnes-Hut algorithm ============================================================================
     long runBarnesHutt(double domainSize, double dt) {
         Quadtree tree;
 
@@ -616,6 +632,208 @@ public:
         
         std::cout << "Barnes Hutt simulation completed in " << duration << " ms" << std::endl;
         return duration;
+    }
+
+    // Barnes-Hut algorithm: with parallelized force computation and position and velocity update  =================================
+    void runBarnesHutParallel_Force_Position(double domainSize, double dt, size_t Nthreads) {
+        Quadtree tree;
+        size_t length = bodies.size();
+
+        for (int step = 0; step < numSteps; ++step) {
+            // Building tree sequentially
+            tree.reset();
+            int root = tree.createNode(0.0, 0.0, domainSize / 2.0);
+
+            for (int i = 0; i < bodies.size(); ++i) {
+                tree.insert(root, i, bodies);
+            }
+            
+            // Initialize threads
+            std::vector<std::thread> threads(Nthreads - 1);
+            std::vector<Body>::iterator block_start = bodies.begin();
+
+            if (length == 0){
+                return;
+            } 
+            if (Nthreads == 0) {
+                Nthreads = 1;
+            }
+            size_t block_size = length / Nthreads;
+
+            // Updating forces in parallel
+            for (size_t i = 0; i < Nthreads - 1; ++i) {
+                std::vector<Body>::iterator block_end = block_start + block_size;
+                threads[i] = std::thread(&Quadtree::computeForceThread, &tree, block_start, block_end, root, std::ref(bodies));
+                block_start = block_end;
+            }
+            tree.computeForceThread(block_start, bodies.end(), root, bodies);
+            
+            // Join threads
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+            
+            // Clear the threads for reuse
+            threads.clear(); // This was suggested to me by chatgpt as an improvement to reuse threads
+            block_start = bodies.begin();
+
+            // Update position and velocity in parallel
+            for (size_t i = 0; i < Nthreads - 1; ++i) {
+                std::vector<Body>::iterator block_end = block_start + block_size;
+                threads[i] = std::thread(&Quadtree::update_pos_vel_Thread, &tree, block_start, block_end, std::ref(bodies), dt);
+                block_start = block_end;
+            }
+            tree.update_pos_vel_Thread(block_start, bodies.end(), bodies, dt);
+            
+            // Join threads
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+
+            // Update time
+            currentTime += dt;
+        }
+    }
+    
+    // Barnes-Hut algorithm: as above + parallelized tree construction =================================
+    void buildTreeThread(Quadtree& tree_quadranti, int& root, std::vector<Body>& bodies, double centerX, double centerY, double halfSize) {
+        root = tree_quadranti.createNode(centerX, centerY, halfSize);
+        for (size_t j = 0; j < bodies.size(); ++j) {
+            tree_quadranti.insert(root, j, bodies);
+        }
+    }
+
+    void buildTreeParallel(Quadtree& tree, int root, std::vector<Body>& bodies, double centerX, double centerY, double halfSize, size_t Nthreads) {
+        Nthreads = std::min(Nthreads, size_t(4)); // we want at most 4 threads for 4 quadrants
+
+        // Sort the N bodies by quadrants of the space
+        std::vector<Body> bodies_in_quad[4]; // array of vector of bodies, each vector represents the bodies in a given quadrant of space
+        for (Body& b : bodies) {
+            int quad=0;
+            if (b.x > centerX) quad+=1;
+            if (b.y > centerY) quad+=2;
+            bodies_in_quad[quad].push_back(b);
+        }
+
+        // Create arrays for the 4 quadtrees, their 4 roots and the threads
+        std::array<Quadtree, 4> subTrees;
+        std::array<int, 4> subtreeRoots= { -1, -1, -1, -1 };
+        std::vector<std::thread> threads(Nthreads - 1);
+        
+        // Build 4 trees corresponding to the 4 quadrants of the space
+        for (size_t i = 0; i < Nthreads - 1; ++i) {
+            // Chatgpt coded the following
+            double offsetX = (i % 2 == 0 ? -0.5 : 0.5) * halfSize;
+            double offsetY = (i < 2 ? -0.5 : 0.5) * halfSize;
+            double qCenterX = centerX + offsetX;
+            double qCenterY = centerY + offsetY;
+            threads[i] = std::thread(&NBodySimulation::buildTreeThread, this, std::ref(subTrees[i]), std::ref(subtreeRoots[i]), std::ref(bodies_in_quad[i]), qCenterX, qCenterY, halfSize / 2);
+        }
+
+        // Run the last thread to build the 4 trees
+        if ((Nthreads-1)<4) {
+            size_t thread = Nthreads-1;
+            // Chatgpt coded the following
+            double offsetX = (thread % 2 == 0 ? -0.5 : 0.5) * halfSize;
+            double offsetY = (thread < 2 ? -0.5 : 0.5) * halfSize;
+            double qCenterX = centerX + offsetX;
+            double qCenterY = centerY + offsetY;
+            this->buildTreeThread(subTrees[thread], subtreeRoots[thread], bodies_in_quad[thread],qCenterX, qCenterY, halfSize/2);
+        }
+
+        // Join threads
+        for (size_t i = 0; i < threads.size(); ++i) {
+            threads[i].join();
+        }
+
+        // Insert the 4 trees as children of the final tree, update the mass and com of the root
+        QuadNode& root_node = tree.quadtree[root];
+        root_node.mass = 0;
+        root_node.comX = 0;
+        root_node.comY = 0;
+        for (size_t quadrant_i = 0; quadrant_i < 4; ++quadrant_i) {
+            // Check if there are bodies in this quadrant
+            if (subtreeRoots[quadrant_i] == -1) {
+                root_node.children[quadrant_i] = -1;
+                continue;
+            }
+            // Update indices of nodes to ensure unicity of the indices in the final tree
+            int minNode = tree.nodeCount;
+            for (int n = 0; n < subTrees[quadrant_i].nodeCount; ++n) {
+                tree.quadtree[tree.nodeCount++] = subTrees[quadrant_i].quadtree[n];
+            }
+            // Link this subtree as a child of the root
+            int child_i = subtreeRoots[quadrant_i] + minNode;
+            root_node.children[quadrant_i] = child_i;
+            // Update massand com of theroot
+            QuadNode& child = tree.quadtree[child_i];
+            root_node.mass += child.mass;
+            root_node.comX += child.comX * child.mass;
+            root_node.comY += child.comY * child.mass;
+        }
+        if (root_node.mass > 0) {
+            root_node.comX /= root_node.mass;
+            root_node.comY /= root_node.mass;
+        }
+    }
+
+    void runBarnesHutParallel(double domainSize, double dt, size_t Nthreads) {
+        Quadtree tree;
+        size_t length = bodies.size();
+
+        // Create threads
+        if (Nthreads == 0) {
+            Nthreads = 1;
+        }
+        if (length == 0){
+            return;
+        } 
+        
+        for (int step = 0; step < numSteps; ++step) {
+            // Building tree in parallel
+            tree.reset();
+            int root = tree.createNode(0.0, 0.0, domainSize / 2.0);
+
+            buildTreeParallel(tree, root, std::ref(bodies), 0.0, 0.0, domainSize / 2.0, Nthreads);
+            
+            // Prepare threads
+            std::vector<std::thread> threads(Nthreads - 1);
+            std::vector<Body>::iterator block_start = bodies.begin();
+            
+            size_t block_size = length / Nthreads;
+
+            // Compute forces in parallel
+            for (size_t i = 0; i < Nthreads - 1; ++i) {
+                std::vector<Body>::iterator block_end = block_start + block_size;
+                threads[i] = std::thread(&Quadtree::computeForceThread, &tree, block_start, block_end, root, std::ref(bodies));
+                block_start = block_end;
+            }
+            tree.computeForceThread(block_start, bodies.end(), root, bodies);
+            
+            // Join threads
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+            
+            // Clear threads for reuse
+            threads.clear(); // This was suggested to me by chatgpt as an improvement to reuse threads
+            block_start = bodies.begin();
+
+            // Update positions and velocities in parallel
+            for (size_t i = 0; i < Nthreads - 1; ++i) {
+                auto block_end = block_start + block_size;
+                threads.emplace_back(&Quadtree::update_pos_vel_Thread, &tree, block_start, block_end, std::ref(bodies), dt);
+                block_start = block_end;
+            }
+            tree.update_pos_vel_Thread(block_start, bodies.end(), bodies, dt);
+            
+            // Join threads
+            for (size_t i = 0; i < threads.size(); ++i) {
+                threads[i].join();
+            }
+            // Update time
+            currentTime += dt;
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////////////////
